@@ -41,12 +41,13 @@
 #define USE_RF95
 #define RF95_CS LORA_CS
 #define RF95_RESET LORA_RESET
-#define RF95_MAX_POWER 5
+#define RF95_MAX_POWER 10
 
-// PA via GPIO26 DAC — start low to avoid brownout; calibrate up once TX confirmed
+// PA via GPIO26 DAC — APC2 voltage controls PA gain; 60/255≈0.78V = moderate power
+// ELRS power_values[]: 30,40,50,60,80,90,130,225 — 60 is mid-range
 #define RF95_PA_EN 26
 #define RF95_PA_DAC_EN
-#define RF95_PA_LEVEL 30    // minimum DAC — reduce PA gain until power supply confirmed stable
+#define RF95_PA_LEVEL 60
 
 // RX enable switch
 #define RF95_RXEN 12
