@@ -37,18 +37,16 @@
 
 #undef EXT_NOTIFY_OUT
 
-// RF95/SX1276 — RFO output path (external PA)
+// RF95/SX1276 — PA_BOOST path to external PA (RFO unconnected on EMAX)
 #define USE_RF95
-#define USE_RF95_RFO
 #define RF95_CS LORA_CS
 #define RF95_RESET LORA_RESET
-#define RF95_MAX_POWER 20
+#define RF95_MAX_POWER 5
 
-// PA via GPIO26 DAC — conservative default, needs calibration
-// Higher DAC value = more output on EMAX PA circuit (opposite polarity vs RadioMaster)
+// PA via GPIO26 DAC — start low to avoid brownout; calibrate up once TX confirmed
 #define RF95_PA_EN 26
 #define RF95_PA_DAC_EN
-#define RF95_PA_LEVEL 30    // ~lowest power; calibrate against mW targets
+#define RF95_PA_LEVEL 30    // minimum DAC — reduce PA gain until power supply confirmed stable
 
 // RX enable switch
 #define RF95_RXEN 12
