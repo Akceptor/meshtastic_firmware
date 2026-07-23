@@ -37,3 +37,10 @@
 #define LR11X0_DIO_AS_RF_SWITCH
 // DCDC always enabled by firmware for LR11x0
 // radio_rfo_hf=true: HF (2.4GHz) uses RFO path — reflected in rfswitch_table MODE_TX_HF
+
+// Second LR1120 (Gemini TX variant) — shares SPI bus (SCK/MISO/MOSI above), separate CS/RST/BUSY/IRQ
+// Unused: Meshtastic supports single-radio only; future dual-radio (433+868 bridge) would use these
+// #define LORA_CS_2      15
+// #define LR1120_NRESET_PIN_2 21
+// #define LR1120_BUSY_PIN_2   39   // GPIO39 input-only
+// #define LR1120_IRQ_PIN_2    34   // GPIO34 input-only
