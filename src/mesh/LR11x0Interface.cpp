@@ -121,10 +121,12 @@ template <typename T> bool LR11x0Interface<T>::init()
         return false;
 
     LR11x0VersionInfo_t version;
-    res = lora.getVersionInfo(&version);
-    if (res == RADIOLIB_ERR_NONE)
+    int16_t verRes = lora.getVersionInfo(&version);
+    if (verRes == RADIOLIB_ERR_NONE)
         LOG_DEBUG("LR11x0 Device %d, HW %d, FW %d.%d, WiFi %d.%d, GNSS %d.%d", version.device, version.hardware, version.fwMajor,
                   version.fwMinor, version.fwMajorWiFi, version.fwMinorWiFi, version.fwGNSS, version.almanacGNSS);
+    else
+        LOG_WARN("LR11x0 getVersionInfo failed (%d), continuing", verRes);
 
     LOG_INFO("Frequency set to %f", getFreq());
     LOG_INFO("Bandwidth set to %f", bw);
