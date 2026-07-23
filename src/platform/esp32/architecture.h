@@ -210,6 +210,8 @@
 #define HW_VENDOR meshtastic_HardwareModel_M5STACK_CARDPUTER_ADV
 #elif defined(MESHNOLOGY_W10)
 #define HW_VENDOR meshtastic_HardwareModel_MESHNOLOGY_W10
+#elif defined(EMAX_900_TX_OLED)
+#define HW_VENDOR meshtastic_HardwareModel_EMAX_900_TX_OLED
 #else
 #define HW_VENDOR meshtastic_HardwareModel_PRIVATE_HW
 #endif

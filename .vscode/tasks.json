@@ -10,6 +10,20 @@
         "isDefault": true
       },
       "label": "PlatformIO: Build"
+    },
+    {
+      "type": "PlatformIO",
+      "task": "Build (emax_900_tx_oled)",
+      "problemMatcher": ["$platformio"],
+      "group": "build",
+      "label": "PlatformIO: Build emax_900_tx_oled"
+    },
+    {
+      "type": "PlatformIO",
+      "task": "Upload (emax_900_tx_oled)",
+      "problemMatcher": ["$platformio"],
+      "group": "test",
+      "label": "PlatformIO: Flash emax_900_tx_oled"
     }
   ]
 }

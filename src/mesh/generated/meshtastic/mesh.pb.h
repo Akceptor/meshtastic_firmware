@@ -339,6 +339,8 @@ typedef enum _meshtastic_HardwareModel {
     meshtastic_HardwareModel_HELTEC_RC52 = 142,
     /* Heltec ESP32C6 + SX1262 */
     meshtastic_HardwareModel_HELTEC_RCC6 = 143,
+    /* Emax OLED 900/915MHz TX module. ESP32 + SX1276 with I2C OLED display. */
+    meshtastic_HardwareModel_EMAX_900_TX_OLED = 144,
     /* ------------------------------------------------------------------------------------------------------------------------------------------
  Reserved ID For developing private Ports. These will show up in live traffic sparsely, so we can use a high number. Keep it within 8 bits.
  ------------------------------------------------------------------------------------------------------------------------------------------ */
