@@ -11,6 +11,7 @@
 
 // SX1276 SPI
 #define LORA_DIO0 4
+#define LORA_DIO1 RADIOLIB_NC  // not connected on EMAX OLED
 #define LORA_SCK 18
 #define LORA_MISO 19
 #define LORA_MOSI 23

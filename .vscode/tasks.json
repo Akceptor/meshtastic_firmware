@@ -24,6 +24,20 @@
       "problemMatcher": ["$platformio"],
       "group": "test",
       "label": "PlatformIO: Flash emax_900_tx_oled"
+    },
+    {
+      "type": "PlatformIO",
+      "task": "Build (bayckrc_dual_band)",
+      "problemMatcher": ["$platformio"],
+      "group": "build",
+      "label": "PlatformIO: Build bayckrc_dual_band"
+    },
+    {
+      "type": "shell",
+      "label": "PlatformIO: Flash bayckrc_dual_band",
+      "command": "cd ${workspaceFolder} && pio run -e bayckrc_dual_band -t upload --upload-port $(ls /dev/tty.usb* 2>/dev/null | head -1)",
+      "problemMatcher": ["$platformio"],
+      "group": "test"
     }
   ]
 }

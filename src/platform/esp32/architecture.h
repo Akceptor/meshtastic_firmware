@@ -212,6 +212,8 @@
 #define HW_VENDOR meshtastic_HardwareModel_MESHNOLOGY_W10
 #elif defined(EMAX_900_TX_OLED)
 #define HW_VENDOR meshtastic_HardwareModel_EMAX_900_TX_OLED
+#elif defined(BAYCKRC_DUAL_BAND)
+#define HW_VENDOR meshtastic_HardwareModel_BAYCKRC_DUAL_BAND
 #else
 #define HW_VENDOR meshtastic_HardwareModel_PRIVATE_HW
 #endif
