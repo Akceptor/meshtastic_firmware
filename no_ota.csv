@@ -1,0 +1,6 @@
+# No OTA partition table for 4MB flash — app0 gets 3MB, no OTA slot
+# Name,   Type, SubType, Offset,  Size, Flags
+nvs,      data, nvs,     0x009000, 0x005000,
+phy_init, data, phy,     0x00f000, 0x001000,
+app0,     app,  factory, 0x010000, 0x300000,
+spiffs,   data, spiffs,  0x310000, 0x0F0000,
