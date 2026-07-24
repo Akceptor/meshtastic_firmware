@@ -37,6 +37,8 @@
 #define LR11X0_DIO_AS_RF_SWITCH
 // DCDC always enabled by firmware for LR11x0
 // radio_rfo_hf=true: HF (2.4GHz) uses RFO path — reflected in rfswitch_table MODE_TX_HF
+// LR1110_MAX_POWER=14 (in platformio.ini) forces LP PA path for all sub-GHz regions.
+// LR1120 HP PA covers 410-510 MHz only — using it at 868/915 MHz causes TX to hang.
 
 // Second LR1120 (Gemini TX variant) — shares SPI bus (SCK/MISO/MOSI above), separate CS/RST/BUSY/IRQ
 // Unused: Meshtastic supports single-radio only; future dual-radio (433+868 bridge) would use these
