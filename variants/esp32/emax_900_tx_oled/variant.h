@@ -47,7 +47,7 @@
 // Systematic calibration: start low, increase until protection trips
 #define RF95_PA_EN 26
 #define RF95_PA_DAC_EN
-#define RF95_PA_LEVEL 50
+#define RF95_PA_LEVEL 55
 
 // RX enable switch
 #define RF95_RXEN 12
