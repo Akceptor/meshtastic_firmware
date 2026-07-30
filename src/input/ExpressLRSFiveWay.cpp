@@ -1,5 +1,6 @@
 #include "ExpressLRSFiveWay.h"
 #include "Throttle.h"
+#include "main.h"
 
 #ifdef INPUTBROKER_EXPRESSLRSFIVEWAY_TYPE
 
@@ -65,6 +66,9 @@ ExpressLRSFiveWay::ExpressLRSFiveWay() : concurrency::OSThread(inputSourceName)
 
     // Express LRS: calculate the threshold for interpreting ADC values as various buttons
     calcFuzzValues();
+
+    // Signal that this device has a joystick capable of navigating the on-screen keyboard
+    osk_found = true;
 
     // Meshtastic: register with canned messages
     inputBroker->registerSource(this);
@@ -146,15 +150,15 @@ void ExpressLRSFiveWay::determineAction(KeyType key, PressLength length)
 {
     switch (key) {
     case LEFT:
-        if (inCannedMessageMenu())        // If in canned message menu
-            sendKey(INPUT_BROKER_CANCEL); // exit the menu (press imaginary cancel key)
+        if (inCannedMessageMenu() && !screen->isOverlayBannerShowing())
+            sendKey(INPUT_BROKER_CANCEL);
         else
             sendKey(INPUT_BROKER_LEFT);
         break;
 
     case RIGHT:
-        if (inCannedMessageMenu())        // If in canned message menu:
-            sendKey(INPUT_BROKER_CANCEL); // exit the menu (press imaginary cancel key)
+        if (inCannedMessageMenu() && !screen->isOverlayBannerShowing())
+            sendKey(INPUT_BROKER_CANCEL);
         else
             sendKey(INPUT_BROKER_RIGHT);
         break;
