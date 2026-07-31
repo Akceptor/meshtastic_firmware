@@ -270,7 +270,7 @@ bool RF95Interface::reconfigure()
     {
         // Use persisted tx_power (capped at region limit) — `power` may already be clobbered to SX1276 dBm
         int8_t requestedPower = config.lora.tx_power ? config.lora.tx_power : power;
-        if (myRegion->powerLimit && requestedPower > myRegion->powerLimit)
+        if (myRegion && myRegion->powerLimit && requestedPower > myRegion->powerLimit)
             requestedPower = myRegion->powerLimit;
         DACDB dacDbValues = getDACandDB(requestedPower);
         LOG_INFO("EMAX PA: config.lora.tx_power=%d power=%d requestedPower=%d DAC=%d", config.lora.tx_power, power, requestedPower,
