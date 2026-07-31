@@ -1,5 +1,8 @@
 #include "configuration.h"
 #if HAS_SCREEN
+#ifdef EMAX_900_TX_OLED
+#include "esp_ota_ops.h"
+#endif
 #include "ClockRenderer.h"
 #include "Default.h"
 #include "DisplayFormatters.h"
@@ -2501,9 +2504,9 @@ void menuHandler::screenOptionsMenu()
 void menuHandler::powerMenu()
 {
 
-    enum optionsNumbers { Back, Reboot, Shutdown, MUI };
-    static const char *optionsArray[4] = {"Back"};
-    static int optionsEnumArray[4] = {Back};
+    enum optionsNumbers { Back, Reboot, Shutdown, MUI, ChangeSlot };
+    static const char *optionsArray[5] = {"Back"};
+    static int optionsEnumArray[5] = {Back};
     int options = 1;
 
     optionsArray[options] = "Reboot";
@@ -2515,6 +2518,11 @@ void menuHandler::powerMenu()
 #if HAS_TFT
     optionsArray[options] = "Switch to MUI";
     optionsEnumArray[options++] = MUI;
+#endif
+
+#ifdef EMAX_900_TX_OLED
+    optionsArray[options] = "Change Slot";
+    optionsEnumArray[options++] = ChangeSlot;
 #endif
 
     BannerOverlayOptions bannerOptions;
@@ -2535,6 +2543,9 @@ void menuHandler::powerMenu()
         } else if (selected == MUI) {
             menuHandler::menuQueue = menuHandler::MuiPicker;
             screen->runNow();
+        } else if (selected == ChangeSlot) {
+            menuHandler::menuQueue = menuHandler::ChangeSlotMenu;
+            screen->runNow();
         } else {
             menuQueue = SystemBaseMenu;
             screen->runNow();
@@ -2542,6 +2553,34 @@ void menuHandler::powerMenu()
     };
     screen->showOverlayBanner(bannerOptions);
 }
+
+#ifdef EMAX_900_TX_OLED
+void menuHandler::changeSlotMenu()
+{
+    static const char *optionsArray[] = {"Cancel", "Change Slot"};
+    BannerOverlayOptions bannerOptions;
+    bannerOptions.message = "Boot other slot?";
+    bannerOptions.optionsArrayPtr = optionsArray;
+    bannerOptions.optionsCount = 2;
+    bannerOptions.bannerCallback = [](int selected) -> void {
+        if (selected == 1) {
+            const esp_partition_t *running = esp_ota_get_running_partition();
+            esp_partition_subtype_t targetSub = (running->subtype == ESP_PARTITION_SUBTYPE_APP_OTA_0)
+                                                    ? ESP_PARTITION_SUBTYPE_APP_OTA_1
+                                                    : ESP_PARTITION_SUBTYPE_APP_OTA_0;
+            const esp_partition_t *target = esp_partition_find_first(ESP_PARTITION_TYPE_APP, targetSub, NULL);
+            if (target && esp_ota_set_boot_partition(target) == ESP_OK) {
+                IF_SCREEN(screen->showSimpleBanner("Switching slot...", 0));
+                rebootAtMsec = millis() + 2000;
+            }
+        } else {
+            menuQueue = PowerMenu;
+            screen->runNow();
+        }
+    };
+    screen->showOverlayBanner(bannerOptions);
+}
+#endif
 
 void menuHandler::keyVerificationInitMenu()
 {
@@ -2945,6 +2984,11 @@ void menuHandler::handleMenuSwitch(OLEDDisplay *display)
     case PowerMenu:
         powerMenu();
         break;
+#ifdef EMAX_900_TX_OLED
+    case ChangeSlotMenu:
+        changeSlotMenu();
+        break;
+#endif
     case FrameToggles:
         frameTogglesMenu();
         break;

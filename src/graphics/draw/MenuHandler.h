@@ -58,7 +58,8 @@ class menuHandler
         ThemeMenu,
         HamModeConfirm,
         LicensedToNormalConfirm,
-        TxPowerPicker
+        TxPowerPicker,
+        ChangeSlotMenu
     };
     static screenMenus menuQueue;
     static uint32_t pickedNodeNum; // node selected by NodePicker for ManageNodeMenu
@@ -118,6 +119,7 @@ class menuHandler
     static void hamModeConfirmMenu();
     static void licensedToNormalConfirmMenu();
     static void txPowerPicker();
+    static void changeSlotMenu();
 
   private:
     static void saveUIConfig();

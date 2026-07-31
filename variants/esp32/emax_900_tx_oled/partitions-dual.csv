@@ -1,0 +1,8 @@
+# EMAX 900 TX OLED dual-boot partition table (4MB flash)
+# Meshtastic in ota_0 (1.875MB), ELRS in ota_1 (1.75MB), shared LittleFS 320KB
+# Name,   Type, SubType,  Offset,   Size,     Flags
+nvs,      data, nvs,      0x009000, 0x005000,
+otadata,  data, ota,      0x00e000, 0x002000,
+ota_0,    app,  ota_0,    0x010000, 0x1E0000,
+ota_1,    app,  ota_1,    0x1F0000, 0x1C0000,
+spiffs,   data, spiffs,   0x3B0000, 0x050000,
