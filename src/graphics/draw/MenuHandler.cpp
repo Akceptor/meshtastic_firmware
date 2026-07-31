@@ -399,40 +399,49 @@ void menuHandler::deviceRolePicker()
 
 void menuHandler::txPowerPicker()
 {
-    static const char *optionsArray[] = {"Back",           "10 mW (10 dBm)", "16 mW (12 dBm)",
-                                          "260 mW (24 dBm)", "350 mW (25 dBm)", "460 mW USB (27)",
-                                          "580 mW PB (28)"};
-    enum optionsNumbers { Back = 0, P10 = 1, P16 = 2, P260 = 3, P350 = 4, P460 = 5, P580 = 6 };
+    static const char *optionsArray[] = {"Back",           "100 mW (20 dBm)", "125 mW (21 dBm)", "160 mW (22 dBm)",
+                                          "200 mW (23 dBm)", "260 mW (24 dBm)",  "350 mW (25 dBm)", "400 mW (26 dBm)",
+                                          "460 mW (27 dBm)", "580 mW PB (28)"};
+    enum optionsNumbers { Back = 0, P20 = 1, P21 = 2, P22 = 3, P23 = 4, P24 = 5, P25 = 6, P26 = 7, P27 = 8, P28 = 9 };
     BannerOverlayOptions bannerOptions;
     bannerOptions.message = "TX Output Power";
     bannerOptions.optionsArrayPtr = optionsArray;
-    bannerOptions.optionsCount = 7;
+    bannerOptions.optionsCount = 10;
     // Pre-select current setting
     switch (config.lora.tx_power) {
-    case 10: bannerOptions.InitialSelected = P10; break;
-    case 12: bannerOptions.InitialSelected = P16; break;
-    case 24: bannerOptions.InitialSelected = P260; break;
-    case 25: bannerOptions.InitialSelected = P350; break;
-    case 27: bannerOptions.InitialSelected = P460; break;
-    case 28: bannerOptions.InitialSelected = P580; break;
-    default: bannerOptions.InitialSelected = P460; break; // default ~460mW
+    case 20: bannerOptions.InitialSelected = P20; break;
+    case 21: bannerOptions.InitialSelected = P21; break;
+    case 22: bannerOptions.InitialSelected = P22; break;
+    case 23: bannerOptions.InitialSelected = P23; break;
+    case 24: bannerOptions.InitialSelected = P24; break;
+    case 25: bannerOptions.InitialSelected = P25; break;
+    case 26: bannerOptions.InitialSelected = P26; break;
+    case 27: bannerOptions.InitialSelected = P27; break;
+    case 28: bannerOptions.InitialSelected = P28; break;
+    default: bannerOptions.InitialSelected = P27; break;
     }
     bannerOptions.bannerCallback = [](int selected) -> void {
         if (selected == Back) {
             menuHandler::menuQueue = menuHandler::LoraMenu;
             screen->runNow();
             return;
-        } else if (selected == P10) {
-            config.lora.tx_power = 10;
-        } else if (selected == P16) {
-            config.lora.tx_power = 12;
-        } else if (selected == P260) {
+        } else if (selected == P20) {
+            config.lora.tx_power = 20;
+        } else if (selected == P21) {
+            config.lora.tx_power = 21;
+        } else if (selected == P22) {
+            config.lora.tx_power = 22;
+        } else if (selected == P23) {
+            config.lora.tx_power = 23;
+        } else if (selected == P24) {
             config.lora.tx_power = 24;
-        } else if (selected == P350) {
+        } else if (selected == P25) {
             config.lora.tx_power = 25;
-        } else if (selected == P460) {
+        } else if (selected == P26) {
+            config.lora.tx_power = 26;
+        } else if (selected == P27) {
             config.lora.tx_power = 27;
-        } else if (selected == P580) {
+        } else if (selected == P28) {
             config.lora.tx_power = 28;
         }
         service->reloadConfig(SEGMENT_CONFIG);

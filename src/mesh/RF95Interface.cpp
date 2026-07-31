@@ -65,14 +65,16 @@ DACDB getDACandDB(uint8_t dbm)
     DACDB defaultValue = {165, 2};
 #endif
 #ifdef EMAX_900_TX_OLED
-    // APC2 inverted: lower DAC = more gain. High DAC minimizes PA gain.
+    // Higher DAC = more PA gain. Values below 24 dBm extrapolated; calibrate if needed.
     dbmToDACDB[] = {
-        {10, {200, 10}}, // ~10mW, PA minimal
-        {12, {180, 10}}, // ~16mW, PA minimal
-        {24, {45, 10}},  // ~260mW
-        {25, {50, 10}},  // ~350mW
-        {27, {55, 10}},  // ~460mW (USB-safe default)
-        {28, {60, 10}}   // ~580mW (requires powerbank/PD)
+        {20, {25, 10}},  // ~100mW (estimated)
+        {21, {30, 10}},  // ~125mW (estimated)
+        {22, {35, 10}},  // ~160mW (estimated)
+        {23, {40, 10}},  // ~200mW (estimated)
+        {24, {45, 10}},  // ~260mW (calibrated)
+        {25, {50, 10}},  // ~350mW (calibrated)
+        {27, {55, 10}},  // ~460mW (calibrated, USB-safe default)
+        {28, {60, 10}}   // ~580mW (calibrated, requires powerbank/PD)
     };
     DACDB defaultValue = {55, 10}; // ~460mW
 #endif
