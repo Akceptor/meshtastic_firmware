@@ -135,12 +135,12 @@ uint8_t test_count = 0;
 
 void menuHandler::loraMenu()
 {
-    static const char *optionsArray[] = {"Back", "Device Role", "Radio Preset", "Frequency Slot", "LoRa Region"};
-    enum optionsNumbers { Back = 0, DeviceRolePicker = 1, RadioPresetPicker = 2, FrequencySlot = 3, LoraPicker = 4 };
+    static const char *optionsArray[] = {"Back", "Device Role", "Radio Preset", "Frequency Slot", "LoRa Region", "Output Power"};
+    enum optionsNumbers { Back = 0, DeviceRolePicker = 1, RadioPresetPicker = 2, FrequencySlot = 3, LoraPicker = 4, TxPower = 5 };
     BannerOverlayOptions bannerOptions;
     bannerOptions.message = "LoRa Actions";
     bannerOptions.optionsArrayPtr = optionsArray;
-    bannerOptions.optionsCount = 5;
+    bannerOptions.optionsCount = 6;
     bannerOptions.bannerCallback = [](int selected) -> void {
         if (selected == Back) {
             // No action
@@ -152,6 +152,8 @@ void menuHandler::loraMenu()
             menuHandler::menuQueue = menuHandler::FrequencySlot;
         } else if (selected == LoraPicker) {
             menuHandler::menuQueue = menuHandler::LoraPicker;
+        } else if (selected == TxPower) {
+            menuHandler::menuQueue = menuHandler::TxPowerPicker;
         }
     };
     screen->showOverlayBanner(bannerOptions);
@@ -391,6 +393,33 @@ void menuHandler::deviceRolePicker()
         }
         service->reloadConfig(SEGMENT_CONFIG);
         rebootAtMsec = (millis() + DEFAULT_REBOOT_SECONDS * 1000);
+    };
+    screen->showOverlayBanner(bannerOptions);
+}
+
+void menuHandler::txPowerPicker()
+{
+    static const char *optionsArray[] = {"Back", "260 mW (24 dBm)", "350 mW (25 dBm)", "460 mW USB (27 dBm)", "580 mW PB (28 dBm)"};
+    enum optionsNumbers { Back = 0, P260 = 1, P350 = 2, P460 = 3, P580 = 4 };
+    BannerOverlayOptions bannerOptions;
+    bannerOptions.message = "TX Output Power";
+    bannerOptions.optionsArrayPtr = optionsArray;
+    bannerOptions.optionsCount = 5;
+    bannerOptions.bannerCallback = [](int selected) -> void {
+        if (selected == Back) {
+            menuHandler::menuQueue = menuHandler::LoraMenu;
+            screen->runNow();
+            return;
+        } else if (selected == P260) {
+            config.lora.tx_power = 24;
+        } else if (selected == P350) {
+            config.lora.tx_power = 25;
+        } else if (selected == P460) {
+            config.lora.tx_power = 27;
+        } else if (selected == P580) {
+            config.lora.tx_power = 28;
+        }
+        service->reloadConfig(SEGMENT_CONFIG);
     };
     screen->showOverlayBanner(bannerOptions);
 }
@@ -2786,6 +2815,9 @@ void menuHandler::handleMenuSwitch(OLEDDisplay *display)
         break;
     case FrequencySlot:
         FrequencySlotPicker();
+        break;
+    case TxPowerPicker:
+        txPowerPicker();
         break;
     case NoTimeoutLoraPicker:
         LoraRegionPicker(0);

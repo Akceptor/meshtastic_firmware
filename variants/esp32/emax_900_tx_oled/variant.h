@@ -43,11 +43,10 @@
 #define RF95_RESET LORA_RESET
 #define RF95_MAX_POWER 10
 
-// PA via GPIO26 DAC — APC2 inverted: lower DAC = more gain (confirmed: 40<60 gave 200 mW vs 70 mW)
-// Systematic calibration: start low, increase until protection trips
+// PA via GPIO26 DAC — APC2 inverted: lower DAC = more gain
+// DAC value is calculated dynamically from TX power setting via getDACandDB() in RF95Interface.cpp
 #define RF95_PA_EN 26
 #define RF95_PA_DAC_EN
-#define RF95_PA_LEVEL 55
 
 // RX enable switch
 #define RF95_RXEN 12
