@@ -1,6 +1,7 @@
 #if RADIOLIB_EXCLUDE_SX127X != 1
 #include "RF95Interface.h"
 #include "MeshRadio.h" // kinda yucky, but we need to know which region we are in
+#include "NodeDB.h"
 #include "RadioLibRF95.h"
 #include "configuration.h"
 #include "error.h"
@@ -20,7 +21,7 @@
 // In theory up to 27 dBm is possible, but the modules installed in most radios can cope with a max of 20.  So BIG WARNING
 // if you set power to something higher than 17 or 20 you might fry your board.
 
-#if defined(RADIOMASTER_900_BANDIT_NANO) || defined(RADIOMASTER_900_BANDIT)
+#if defined(RADIOMASTER_900_BANDIT_NANO) || defined(RADIOMASTER_900_BANDIT) || defined(EMAX_900_TX_OLED)
 // Structure to hold DAC and DB values
 typedef struct {
     uint8_t dac;
@@ -52,6 +53,7 @@ DACDB getDACandDB(uint8_t dbm)
         {27, {128, 9}}, // 500mW
         {30, {90, 12}}  // 1000mW
     };
+    DACDB defaultValue = {168, 2};
 #endif
 #ifdef RADIOMASTER_900_BANDIT
     dbmToDACDB[] = {
@@ -60,6 +62,21 @@ DACDB getDACandDB(uint8_t dbm)
         {27, {142, 9}}, // 500mW
         {30, {110, 10}} // 1000mW
     };
+    DACDB defaultValue = {165, 2};
+#endif
+#ifdef EMAX_900_TX_OLED
+    // Higher DAC = more PA gain. Values below 24 dBm extrapolated; calibrate if needed.
+    dbmToDACDB[] = {
+        {20, {25, 10}},  // ~70mW (calibrated)
+        {21, {30, 10}},  // ~100mW (calibrated)
+        {22, {35, 10}},  // ~140mW (calibrated)
+        {23, {40, 10}},  // ~200mW (calibrated)
+        {24, {45, 10}},  // ~260mW (calibrated)
+        {25, {50, 10}},  // ~350mW (calibrated)
+        {27, {55, 10}},  // ~460mW (calibrated, USB-safe default)
+        {28, {60, 10}}   // ~580mW (calibrated, requires powerbank/PD)
+    };
+    DACDB defaultValue = {55, 10}; // ~460mW
 #endif
     const int numValues = sizeof(dbmToDACDB) / sizeof(dbmToDACDB[0]);
 
@@ -70,13 +87,6 @@ DACDB getDACandDB(uint8_t dbm)
         }
     }
 
-    // Return a default value if no match is found and default to 100mW
-#ifdef RADIOMASTER_900_BANDIT_NANO
-    DACDB defaultValue = {168, 2};
-#endif
-#ifdef RADIOMASTER_900_BANDIT
-    DACDB defaultValue = {165, 2};
-#endif
     return defaultValue;
 }
 #endif
@@ -115,11 +125,16 @@ bool RF95Interface::init()
 {
     RadioLibInterface::init();
 
-#if defined(RADIOMASTER_900_BANDIT_NANO) || defined(RADIOMASTER_900_BANDIT)
-    // DAC and DB values based on dBm using interpolation
-    DACDB dacDbValues = getDACandDB(power);
-    int8_t powerDAC = dacDbValues.dac;
-    power = dacDbValues.db;
+#if defined(RADIOMASTER_900_BANDIT_NANO) || defined(RADIOMASTER_900_BANDIT) || defined(EMAX_900_TX_OLED)
+    // Use persisted tx_power — `power` may be pre-clamped to RF95_MAX_POWER by this point
+    int8_t requestedPower = config.lora.tx_power ? config.lora.tx_power : power;
+    if (myRegion && myRegion->powerLimit && requestedPower > myRegion->powerLimit)
+        requestedPower = myRegion->powerLimit;
+    DACDB dacDbValuesInit = getDACandDB(requestedPower);
+    LOG_INFO("EMAX PA init: config.lora.tx_power=%d power=%d requestedPower=%d DAC=%d", config.lora.tx_power, power,
+             requestedPower, dacDbValuesInit.dac);
+    int8_t powerDAC = dacDbValuesInit.dac;
+    power = dacDbValuesInit.db;
 #endif
 
     limitPower(RF95_MAX_POWER);
@@ -134,8 +149,8 @@ bool RF95Interface::init()
     // enable PA
 #ifdef RF95_PA_EN
 #if defined(RF95_PA_DAC_EN)
-#if defined(RADIOMASTER_900_BANDIT_NANO) || defined(RADIOMASTER_900_BANDIT)
-    // Use calculated DAC value
+#if defined(RADIOMASTER_900_BANDIT_NANO) || defined(RADIOMASTER_900_BANDIT) || defined(EMAX_900_TX_OLED)
+    // Use calculated DAC value based on requested power
     dacWrite(RF95_PA_EN, powerDAC);
 #else
     // Use Value set in /*/variant.h
@@ -183,7 +198,7 @@ bool RF95Interface::init()
     LOG_INFO("Frequency set to %f", getFreq());
     LOG_INFO("Bandwidth set to %f", bw);
     LOG_INFO("Power output set to %d", power);
-#if defined(RADIOMASTER_900_BANDIT_NANO) || defined(RADIOMASTER_900_BANDIT)
+#if defined(RADIOMASTER_900_BANDIT_NANO) || defined(RADIOMASTER_900_BANDIT) || defined(EMAX_900_TX_OLED)
     LOG_INFO("DAC output set to %d", powerDAC);
 #endif
 
@@ -250,6 +265,20 @@ bool RF95Interface::reconfigure()
 #endif
     if (err != RADIOLIB_ERR_NONE)
         RECORD_CRITICALERROR(meshtastic_CriticalErrorCode_INVALID_RADIO_SETTING);
+
+#if defined(RADIOMASTER_900_BANDIT_NANO) || defined(RADIOMASTER_900_BANDIT) || defined(EMAX_900_TX_OLED)
+    {
+        // Use persisted tx_power (capped at region limit) — `power` may already be clobbered to SX1276 dBm
+        int8_t requestedPower = config.lora.tx_power ? config.lora.tx_power : power;
+        if (myRegion->powerLimit && requestedPower > myRegion->powerLimit)
+            requestedPower = myRegion->powerLimit;
+        DACDB dacDbValues = getDACandDB(requestedPower);
+        LOG_INFO("EMAX PA: config.lora.tx_power=%d power=%d requestedPower=%d DAC=%d", config.lora.tx_power, power, requestedPower,
+                 dacDbValues.dac);
+        dacWrite(RF95_PA_EN, dacDbValues.dac);
+        power = dacDbValues.db;
+    }
+#endif
 
     startReceive(); // restart receiving
 

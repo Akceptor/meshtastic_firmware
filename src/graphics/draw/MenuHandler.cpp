@@ -1,5 +1,8 @@
 #include "configuration.h"
 #if HAS_SCREEN
+#ifdef EMAX_900_TX_OLED
+#include "esp_ota_ops.h"
+#endif
 #include "ClockRenderer.h"
 #include "Default.h"
 #include "GPS.h"
@@ -65,12 +68,12 @@ uint8_t test_count = 0;
 
 void menuHandler::loraMenu()
 {
-    static const char *optionsArray[] = {"Back", "Device Role", "Radio Preset", "Frequency Slot", "LoRa Region"};
-    enum optionsNumbers { Back = 0, DeviceRolePicker = 1, RadioPresetPicker = 2, FrequencySlot = 3, LoraPicker = 4 };
+    static const char *optionsArray[] = {"Back", "Device Role", "Radio Preset", "Frequency Slot", "LoRa Region", "Output Power"};
+    enum optionsNumbers { Back = 0, DeviceRolePicker = 1, RadioPresetPicker = 2, FrequencySlot = 3, LoraPicker = 4, TxPower = 5 };
     BannerOverlayOptions bannerOptions;
     bannerOptions.message = "LoRa Actions";
     bannerOptions.optionsArrayPtr = optionsArray;
-    bannerOptions.optionsCount = 5;
+    bannerOptions.optionsCount = 6;
     bannerOptions.bannerCallback = [](int selected) -> void {
         if (selected == Back) {
             // No action
@@ -82,6 +85,8 @@ void menuHandler::loraMenu()
             menuHandler::menuQueue = menuHandler::FrequencySlot;
         } else if (selected == LoraPicker) {
             menuHandler::menuQueue = menuHandler::LoraPicker;
+        } else if (selected == TxPower) {
+            menuHandler::menuQueue = menuHandler::TxPowerPicker;
         }
     };
     screen->showOverlayBanner(bannerOptions);
@@ -246,6 +251,58 @@ void menuHandler::deviceRolePicker()
         }
         service->reloadConfig(SEGMENT_CONFIG);
         rebootAtMsec = (millis() + DEFAULT_REBOOT_SECONDS * 1000);
+    };
+    screen->showOverlayBanner(bannerOptions);
+}
+
+void menuHandler::txPowerPicker()
+{
+    static const char *optionsArray[] = {"Back",          "70 mW (20 dBm)",  "100 mW (21 dBm)", "140 mW (22 dBm)",
+                                          "200 mW (23 dBm)", "260 mW (24 dBm)", "350 mW (25 dBm)", "400 mW (26 dBm)",
+                                          "460 mW (27 dBm)", "580 mW PB (28)"};
+    enum optionsNumbers { Back = 0, P20 = 1, P21 = 2, P22 = 3, P23 = 4, P24 = 5, P25 = 6, P26 = 7, P27 = 8, P28 = 9 };
+    BannerOverlayOptions bannerOptions;
+    bannerOptions.message = "TX Output Power";
+    bannerOptions.optionsArrayPtr = optionsArray;
+    bannerOptions.optionsCount = 10;
+    // Pre-select current setting
+    switch (config.lora.tx_power) {
+    case 20: bannerOptions.InitialSelected = P20; break;
+    case 21: bannerOptions.InitialSelected = P21; break;
+    case 22: bannerOptions.InitialSelected = P22; break;
+    case 23: bannerOptions.InitialSelected = P23; break;
+    case 24: bannerOptions.InitialSelected = P24; break;
+    case 25: bannerOptions.InitialSelected = P25; break;
+    case 26: bannerOptions.InitialSelected = P26; break;
+    case 27: bannerOptions.InitialSelected = P27; break;
+    case 28: bannerOptions.InitialSelected = P28; break;
+    default: bannerOptions.InitialSelected = P27; break;
+    }
+    bannerOptions.bannerCallback = [](int selected) -> void {
+        if (selected == Back) {
+            menuHandler::menuQueue = menuHandler::LoraMenu;
+            screen->runNow();
+            return;
+        } else if (selected == P20) {
+            config.lora.tx_power = 20;
+        } else if (selected == P21) {
+            config.lora.tx_power = 21;
+        } else if (selected == P22) {
+            config.lora.tx_power = 22;
+        } else if (selected == P23) {
+            config.lora.tx_power = 23;
+        } else if (selected == P24) {
+            config.lora.tx_power = 24;
+        } else if (selected == P25) {
+            config.lora.tx_power = 25;
+        } else if (selected == P26) {
+            config.lora.tx_power = 26;
+        } else if (selected == P27) {
+            config.lora.tx_power = 27;
+        } else if (selected == P28) {
+            config.lora.tx_power = 28;
+        }
+        service->reloadConfig(SEGMENT_CONFIG);
     };
     screen->showOverlayBanner(bannerOptions);
 }
@@ -2381,9 +2438,9 @@ void menuHandler::screenOptionsMenu()
 void menuHandler::powerMenu()
 {
 
-    enum optionsNumbers { Back, Reboot, Shutdown, MUI };
-    static const char *optionsArray[4] = {"Back"};
-    static int optionsEnumArray[4] = {Back};
+    enum optionsNumbers { Back, Reboot, Shutdown, MUI, ChangeSlot };
+    static const char *optionsArray[5] = {"Back"};
+    static int optionsEnumArray[5] = {Back};
     int options = 1;
 
     optionsArray[options] = "Reboot";
@@ -2395,6 +2452,11 @@ void menuHandler::powerMenu()
 #if HAS_TFT
     optionsArray[options] = "Switch to MUI";
     optionsEnumArray[options++] = MUI;
+#endif
+
+#ifdef EMAX_900_TX_OLED
+    optionsArray[options] = "Change Slot";
+    optionsEnumArray[options++] = ChangeSlot;
 #endif
 
     BannerOverlayOptions bannerOptions;
@@ -2415,6 +2477,9 @@ void menuHandler::powerMenu()
         } else if (selected == MUI) {
             menuHandler::menuQueue = menuHandler::MuiPicker;
             screen->runNow();
+        } else if (selected == ChangeSlot) {
+            menuHandler::menuQueue = menuHandler::ChangeSlotMenu;
+            screen->runNow();
         } else {
             menuQueue = SystemBaseMenu;
             screen->runNow();
@@ -2422,6 +2487,34 @@ void menuHandler::powerMenu()
     };
     screen->showOverlayBanner(bannerOptions);
 }
+
+#ifdef EMAX_900_TX_OLED
+void menuHandler::changeSlotMenu()
+{
+    static const char *optionsArray[] = {"Cancel", "Change Slot"};
+    BannerOverlayOptions bannerOptions;
+    bannerOptions.message = "Boot other slot?";
+    bannerOptions.optionsArrayPtr = optionsArray;
+    bannerOptions.optionsCount = 2;
+    bannerOptions.bannerCallback = [](int selected) -> void {
+        if (selected == 1) {
+            const esp_partition_t *running = esp_ota_get_running_partition();
+            esp_partition_subtype_t targetSub = (running->subtype == ESP_PARTITION_SUBTYPE_APP_OTA_0)
+                                                    ? ESP_PARTITION_SUBTYPE_APP_OTA_1
+                                                    : ESP_PARTITION_SUBTYPE_APP_OTA_0;
+            const esp_partition_t *target = esp_partition_find_first(ESP_PARTITION_TYPE_APP, targetSub, NULL);
+            if (target && esp_ota_set_boot_partition(target) == ESP_OK) {
+                IF_SCREEN(screen->showSimpleBanner("Switching slot...", 0));
+                rebootAtMsec = millis() + 2000;
+            }
+        } else {
+            menuQueue = PowerMenu;
+            screen->runNow();
+        }
+    };
+    screen->showOverlayBanner(bannerOptions);
+}
+#endif
 
 void menuHandler::keyVerificationInitMenu()
 {
@@ -2675,6 +2768,9 @@ void menuHandler::handleMenuSwitch(OLEDDisplay *display)
     case FrequencySlot:
         FrequencySlotPicker();
         break;
+    case TxPowerPicker:
+        txPowerPicker();
+        break;
     case NoTimeoutLoraPicker:
         LoraRegionPicker(0);
         break;
@@ -2779,6 +2875,11 @@ void menuHandler::handleMenuSwitch(OLEDDisplay *display)
     case PowerMenu:
         powerMenu();
         break;
+#ifdef EMAX_900_TX_OLED
+    case ChangeSlotMenu:
+        changeSlotMenu();
+        break;
+#endif
     case FrameToggles:
         frameTogglesMenu();
         break;
