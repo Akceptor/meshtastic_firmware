@@ -399,8 +399,8 @@ void menuHandler::deviceRolePicker()
 
 void menuHandler::txPowerPicker()
 {
-    static const char *optionsArray[] = {"Back",           "100 mW (20 dBm)", "125 mW (21 dBm)", "160 mW (22 dBm)",
-                                          "200 mW (23 dBm)", "260 mW (24 dBm)",  "350 mW (25 dBm)", "400 mW (26 dBm)",
+    static const char *optionsArray[] = {"Back",          "70 mW (20 dBm)",  "100 mW (21 dBm)", "140 mW (22 dBm)",
+                                          "200 mW (23 dBm)", "260 mW (24 dBm)", "350 mW (25 dBm)", "400 mW (26 dBm)",
                                           "460 mW (27 dBm)", "580 mW PB (28)"};
     enum optionsNumbers { Back = 0, P20 = 1, P21 = 2, P22 = 3, P23 = 4, P24 = 5, P25 = 6, P26 = 7, P27 = 8, P28 = 9 };
     BannerOverlayOptions bannerOptions;

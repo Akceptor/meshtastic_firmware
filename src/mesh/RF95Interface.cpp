@@ -67,10 +67,10 @@ DACDB getDACandDB(uint8_t dbm)
 #ifdef EMAX_900_TX_OLED
     // Higher DAC = more PA gain. Values below 24 dBm extrapolated; calibrate if needed.
     dbmToDACDB[] = {
-        {20, {25, 10}},  // ~100mW (estimated)
-        {21, {30, 10}},  // ~125mW (estimated)
-        {22, {35, 10}},  // ~160mW (estimated)
-        {23, {40, 10}},  // ~200mW (estimated)
+        {20, {25, 10}},  // ~70mW (calibrated)
+        {21, {30, 10}},  // ~100mW (calibrated)
+        {22, {35, 10}},  // ~140mW (calibrated)
+        {23, {40, 10}},  // ~200mW (calibrated)
         {24, {45, 10}},  // ~260mW (calibrated)
         {25, {50, 10}},  // ~350mW (calibrated)
         {27, {55, 10}},  // ~460mW (calibrated, USB-safe default)
