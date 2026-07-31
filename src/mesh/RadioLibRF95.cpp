@@ -83,4 +83,10 @@ uint8_t RadioLibRF95::readReg(uint8_t addr)
     Module *mod = this->getMod();
     return mod->SPIreadRegister(addr);
 }
+
+void RadioLibRF95::writeReg(uint8_t addr, uint8_t value)
+{
+    Module *mod = this->getMod();
+    mod->SPIwriteRegister(addr, value);
+}
 #endif

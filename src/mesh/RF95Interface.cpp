@@ -65,18 +65,20 @@ DACDB getDACandDB(uint8_t dbm)
     DACDB defaultValue = {165, 2};
 #endif
 #ifdef EMAX_900_TX_OLED
-    // Higher DAC = more PA gain. Values below 24 dBm extrapolated; calibrate if needed.
+    // PA_BOOST path confirmed. .db=20 → RegPaDac=0x87 (high-power mode, +20dBm on PA_BOOST).
+    // DAC controls external PA gain via APC2 (GPIO26). Higher DAC = more gain.
+    // .db=17: SX1276 PA_BOOST at +17dBm draws ~87mA (under 100mA OCP limit).
+    // +20dBm drew ~125mA → OCP tripped → PA fault mid-TX → reboot.
+    // External PA provides final amplification via APC2 DAC.
     dbmToDACDB[] = {
-        {20, {25, 10}},  // ~70mW (calibrated)
-        {21, {30, 10}},  // ~100mW (calibrated)
-        {22, {35, 10}},  // ~140mW (calibrated)
-        {23, {40, 10}},  // ~200mW (calibrated)
-        {24, {45, 10}},  // ~260mW (calibrated)
-        {25, {50, 10}},  // ~350mW (calibrated)
-        {27, {55, 10}},  // ~460mW (calibrated, USB-safe default)
-        {28, {60, 10}}   // ~580mW (calibrated, requires powerbank/PD)
+        {20, {30, 17}},
+        {22, {40, 17}},
+        {24, {50, 17}},
+        {25, {60, 17}},
+        {27, {80, 17}},
+        {28, {90, 17}}
     };
-    DACDB defaultValue = {55, 10}; // ~460mW
+    DACDB defaultValue = {80, 17};
 #endif
     const int numValues = sizeof(dbmToDACDB) / sizeof(dbmToDACDB[0]);
 
@@ -194,6 +196,15 @@ bool RF95Interface::init()
     LOG_INFO("RF95 init result %d", res);
     if (res == RADIOLIB_ERR_CHIP_NOT_FOUND || res == RADIOLIB_ERR_SPI_CMD_FAILED)
         return false;
+
+#if defined(EMAX_900_TX_OLED)
+    // SX1276 resets with LowFrequencyModeOn (RegOpMode bit 3) = 1; RadioLib never clears it.
+    // 869 MHz requires HF mode (bit 3 = 0) — LF mode uses wrong PA path, TX is undecodable.
+    // Clear bit 3 (LowFrequencyModeOn): SX1276 resets to LF mode; RadioLib never clears it.
+    // 869 MHz needs HF mode (bit 3 = 0) — in LF mode PA_BOOST uses wrong circuitry, TX undecodable.
+    lora->writeReg(RADIOLIB_SX127X_REG_OP_MODE, lora->readReg(RADIOLIB_SX127X_REG_OP_MODE) & ~0x08);
+    LOG_INFO("EMAX: cleared LowFrequencyModeOn, OpMode=0x%02x", lora->readReg(RADIOLIB_SX127X_REG_OP_MODE));
+#endif
 
     LOG_INFO("Frequency set to %f", getFreq());
     LOG_INFO("Bandwidth set to %f", bw);

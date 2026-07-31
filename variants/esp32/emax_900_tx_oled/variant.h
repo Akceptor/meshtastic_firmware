@@ -37,13 +37,15 @@
 
 #undef EXT_NOTIFY_OUT
 
-// RF95/SX1276 — PA_BOOST path to external PA (RFO unconnected on EMAX)
+// RF95/SX1276 — PA_BOOST path to external PA (RFO unconnected, confirmed by no-burst test).
+// MAX_POWER=17: at +20dBm SX1276 draws ~125mA, trips 100mA OCP, reboots. At +17dBm draws ~87mA.
+// External PA (APC2 DAC) provides final output power.
 #define USE_RF95
 #define RF95_CS LORA_CS
 #define RF95_RESET LORA_RESET
-#define RF95_MAX_POWER 10
+#define RF95_MAX_POWER 17
 
-// PA via GPIO26 DAC — APC2 inverted: lower DAC = more gain
+// PA via GPIO26 DAC — APC2 normal: higher DAC = more gain (ELRS power_values[0]=30 min, [7]=225 max)
 // DAC value is calculated dynamically from TX power setting via getDACandDB() in RF95Interface.cpp
 #define RF95_PA_EN 26
 #define RF95_PA_DAC_EN

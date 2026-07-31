@@ -62,8 +62,9 @@ class RadioLibRF95 : public SX1278
     // Return true if we are actively receiving a message currently
     bool isReceiving();
 
-    /// For debugging
+    /// For debugging and low-level fixups
     uint8_t readReg(uint8_t addr);
+    void writeReg(uint8_t addr, uint8_t value);
 
   protected:
     // since default current limit for SX126x/127x in updated RadioLib is 60mA
