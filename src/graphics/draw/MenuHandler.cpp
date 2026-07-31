@@ -399,17 +399,33 @@ void menuHandler::deviceRolePicker()
 
 void menuHandler::txPowerPicker()
 {
-    static const char *optionsArray[] = {"Back", "260 mW (24 dBm)", "350 mW (25 dBm)", "460 mW USB (27 dBm)", "580 mW PB (28 dBm)"};
-    enum optionsNumbers { Back = 0, P260 = 1, P350 = 2, P460 = 3, P580 = 4 };
+    static const char *optionsArray[] = {"Back",           "10 mW (10 dBm)", "16 mW (12 dBm)",
+                                          "260 mW (24 dBm)", "350 mW (25 dBm)", "460 mW USB (27)",
+                                          "580 mW PB (28)"};
+    enum optionsNumbers { Back = 0, P10 = 1, P16 = 2, P260 = 3, P350 = 4, P460 = 5, P580 = 6 };
     BannerOverlayOptions bannerOptions;
     bannerOptions.message = "TX Output Power";
     bannerOptions.optionsArrayPtr = optionsArray;
-    bannerOptions.optionsCount = 5;
+    bannerOptions.optionsCount = 7;
+    // Pre-select current setting
+    switch (config.lora.tx_power) {
+    case 10: bannerOptions.InitialSelected = P10; break;
+    case 12: bannerOptions.InitialSelected = P16; break;
+    case 24: bannerOptions.InitialSelected = P260; break;
+    case 25: bannerOptions.InitialSelected = P350; break;
+    case 27: bannerOptions.InitialSelected = P460; break;
+    case 28: bannerOptions.InitialSelected = P580; break;
+    default: bannerOptions.InitialSelected = P460; break; // default ~460mW
+    }
     bannerOptions.bannerCallback = [](int selected) -> void {
         if (selected == Back) {
             menuHandler::menuQueue = menuHandler::LoraMenu;
             screen->runNow();
             return;
+        } else if (selected == P10) {
+            config.lora.tx_power = 10;
+        } else if (selected == P16) {
+            config.lora.tx_power = 12;
         } else if (selected == P260) {
             config.lora.tx_power = 24;
         } else if (selected == P350) {
