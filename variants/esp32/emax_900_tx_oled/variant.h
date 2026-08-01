@@ -37,13 +37,17 @@
 
 #undef EXT_NOTIFY_OUT
 
-// RF95/SX1276 — PA_BOOST path to external PA (RFO unconnected, confirmed by no-burst test).
-// MAX_POWER=17: at +20dBm SX1276 draws ~125mA, trips 100mA OCP, reboots. At +17dBm draws ~87mA.
-// External PA (APC2 DAC) provides final output power.
+// RF95/SX1276 — PA_BOOST path to external PA (RFO unconnected; EMAX 900 OLED.json has no radio_rfo_hf).
+// ExpressLRS drives this board's SX1276 at RegPaConfig=0xF0 => PA_BOOST OutputPower=0 => +2 dBm.
+// (No power_values2 in the ELRS target JSON, so POWERMGNT never calls Radio.SetOutputPower;
+//  the chip stays at the SX127x.cpp init default.) All gain comes from the external PA via APC2.
+// Driving the SX1276 at 17 dBm overdrove the PA input by 15 dB. Correcting it to +2 dBm brings
+// the board to ExpressLRS parity and yields a clean 260 mW at the antenna, but note it did NOT
+// fix the outstanding SF>=8 transmit failure - see HANDOFF.md.
 #define USE_RF95
 #define RF95_CS LORA_CS
 #define RF95_RESET LORA_RESET
-#define RF95_MAX_POWER 17
+#define RF95_MAX_POWER 2
 
 // PA via GPIO26 DAC — APC2 normal: higher DAC = more gain (ELRS power_values[0]=30 min, [7]=225 max)
 // DAC value is calculated dynamically from TX power setting via getDACandDB() in RF95Interface.cpp

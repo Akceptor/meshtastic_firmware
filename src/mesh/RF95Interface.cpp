@@ -65,20 +65,21 @@ DACDB getDACandDB(uint8_t dbm)
     DACDB defaultValue = {165, 2};
 #endif
 #ifdef EMAX_900_TX_OLED
-    // PA_BOOST path confirmed. .db=20 → RegPaDac=0x87 (high-power mode, +20dBm on PA_BOOST).
-    // DAC controls external PA gain via APC2 (GPIO26). Higher DAC = more gain.
-    // .db=17: SX1276 PA_BOOST at +17dBm draws ~87mA (under 100mA OCP limit).
-    // +20dBm drew ~125mA → OCP tripped → PA fault mid-TX → reboot.
-    // External PA provides final amplification via APC2 DAC.
+    // DAC values are ExpressLRS "EMAX 900 OLED.json" power_values [30,40,50,60,80,90,130,225],
+    // which map 1:1 onto PowerLevels_e (10/25/50/100/250/500/1000/2000 mW).
+    // .db is always 2: ELRS keeps the SX1276 at PA_BOOST OutputPower=0 (+2 dBm) and lets the
+    // external PA supply all gain. Anything higher overdrives the PA input.
     dbmToDACDB[] = {
-        {20, {30, 17}},
-        {22, {40, 17}},
-        {24, {50, 17}},
-        {25, {60, 17}},
-        {27, {80, 17}},
-        {28, {90, 17}}
+        {10, {30, 2}},  // 10mW
+        {14, {40, 2}},  // 25mW
+        {17, {50, 2}},  // 50mW
+        {20, {60, 2}},  // 100mW
+        {24, {80, 2}},  // 250mW
+        {27, {90, 2}},  // 500mW
+        {30, {130, 2}}, // 1000mW
+        {33, {225, 2}}  // 2000mW
     };
-    DACDB defaultValue = {80, 17};
+    DACDB defaultValue = {50, 2}; // ELRS power_default = index 2 = 50mW
 #endif
     const int numValues = sizeof(dbmToDACDB) / sizeof(dbmToDACDB[0]);
 
@@ -100,9 +101,27 @@ RF95Interface::RF95Interface(LockingArduinoHal *hal, RADIOLIB_PIN_TYPE cs, RADIO
     LOG_DEBUG("RF95Interface(cs=%d, irq=%d, rst=%d, busy=%d)", cs, irq, rst, busy);
 }
 
+#if defined(EMAX_900_TX_OLED)
+/** Dump the LoRa modem registers so a TX-time snapshot can be diffed against an RX-time one. */
+void RF95Interface::dumpModemRegs(const char *what)
+{
+    uint32_t frf = ((uint32_t)lora->readReg(0x06) << 16) | ((uint32_t)lora->readReg(0x07) << 8) | lora->readReg(0x08);
+    LOG_INFO("EMAX regs [%s] OpMode=0x%02x Frf=0x%06x (%.4f MHz) MC1=0x%02x MC2=0x%02x MC3=0x%02x", what,
+             lora->readReg(0x01), frf, (double)frf * 32000000.0 / 524288.0 / 1000000.0, lora->readReg(0x1D),
+             lora->readReg(0x1E), lora->readReg(0x26));
+    LOG_INFO("EMAX regs [%s] Preamble=%u PayloadLen=%u HopPeriod=%u Sync=0x%02x DetOpt=0x%02x DetThr=0x%02x "
+             "InvIQ=0x%02x InvIQ2=0x%02x",
+             what, ((uint16_t)lora->readReg(0x20) << 8) | lora->readReg(0x21), lora->readReg(0x22), lora->readReg(0x24),
+             lora->readReg(0x39), lora->readReg(0x31), lora->readReg(0x37), lora->readReg(0x33), lora->readReg(0x3B));
+}
+#endif
+
 /** Some boards require GPIO control of tx vs rx paths */
 void RF95Interface::setTransmitEnable(bool txon)
 {
+#if defined(EMAX_900_TX_OLED)
+    LOG_INFO("EMAX trace %u: setTransmitEnable(%d)", millis(), txon ? 1 : 0);
+#endif
 #ifdef RF95_TXEN
     digitalWrite(RF95_TXEN, txon ? 1 : 0);
 #elif ARCH_PORTDUINO
@@ -128,14 +147,17 @@ bool RF95Interface::init()
     RadioLibInterface::init();
 
 #if defined(RADIOMASTER_900_BANDIT_NANO) || defined(RADIOMASTER_900_BANDIT) || defined(EMAX_900_TX_OLED)
-    // Use persisted tx_power — `power` may be pre-clamped to RF95_MAX_POWER by this point
-    int8_t requestedPower = config.lora.tx_power ? config.lora.tx_power : power;
+    // Requested EIRP in dBm. tx_power == 0 means "max allowed", not "2 dBm" — `power` is the
+    // SX1276 driver level (always 2 on this board), so it must not be used as the fallback.
+    int8_t requestedPower = config.lora.tx_power;
+    if (requestedPower <= 0)
+        requestedPower = (myRegion && myRegion->powerLimit) ? myRegion->powerLimit : 30;
     if (myRegion && myRegion->powerLimit && requestedPower > myRegion->powerLimit)
         requestedPower = myRegion->powerLimit;
     DACDB dacDbValuesInit = getDACandDB(requestedPower);
     LOG_INFO("EMAX PA init: config.lora.tx_power=%d power=%d requestedPower=%d DAC=%d", config.lora.tx_power, power,
              requestedPower, dacDbValuesInit.dac);
-    int8_t powerDAC = dacDbValuesInit.dac;
+    uint8_t powerDAC = dacDbValuesInit.dac; // must be unsigned: top DAC value is 225
     power = dacDbValuesInit.db;
 #endif
 
@@ -152,7 +174,6 @@ bool RF95Interface::init()
 #ifdef RF95_PA_EN
 #if defined(RF95_PA_DAC_EN)
 #if defined(RADIOMASTER_900_BANDIT_NANO) || defined(RADIOMASTER_900_BANDIT) || defined(EMAX_900_TX_OLED)
-    // Use calculated DAC value based on requested power
     dacWrite(RF95_PA_EN, powerDAC);
 #else
     // Use Value set in /*/variant.h
@@ -196,15 +217,6 @@ bool RF95Interface::init()
     LOG_INFO("RF95 init result %d", res);
     if (res == RADIOLIB_ERR_CHIP_NOT_FOUND || res == RADIOLIB_ERR_SPI_CMD_FAILED)
         return false;
-
-#if defined(EMAX_900_TX_OLED)
-    // SX1276 resets with LowFrequencyModeOn (RegOpMode bit 3) = 1; RadioLib never clears it.
-    // 869 MHz requires HF mode (bit 3 = 0) — LF mode uses wrong PA path, TX is undecodable.
-    // Clear bit 3 (LowFrequencyModeOn): SX1276 resets to LF mode; RadioLib never clears it.
-    // 869 MHz needs HF mode (bit 3 = 0) — in LF mode PA_BOOST uses wrong circuitry, TX undecodable.
-    lora->writeReg(RADIOLIB_SX127X_REG_OP_MODE, lora->readReg(RADIOLIB_SX127X_REG_OP_MODE) & ~0x08);
-    LOG_INFO("EMAX: cleared LowFrequencyModeOn, OpMode=0x%02x", lora->readReg(RADIOLIB_SX127X_REG_OP_MODE));
-#endif
 
     LOG_INFO("Frequency set to %f", getFreq());
     LOG_INFO("Bandwidth set to %f", bw);
@@ -279,8 +291,10 @@ bool RF95Interface::reconfigure()
 
 #if defined(RADIOMASTER_900_BANDIT_NANO) || defined(RADIOMASTER_900_BANDIT) || defined(EMAX_900_TX_OLED)
     {
-        // Use persisted tx_power (capped at region limit) — `power` may already be clobbered to SX1276 dBm
-        int8_t requestedPower = config.lora.tx_power ? config.lora.tx_power : power;
+        // Requested EIRP in dBm, capped at the region limit. See the note in init().
+        int8_t requestedPower = config.lora.tx_power;
+        if (requestedPower <= 0)
+            requestedPower = (myRegion && myRegion->powerLimit) ? myRegion->powerLimit : 30;
         if (myRegion && myRegion->powerLimit && requestedPower > myRegion->powerLimit)
             requestedPower = myRegion->powerLimit;
         DACDB dacDbValues = getDACandDB(requestedPower);
@@ -308,6 +322,9 @@ void RF95Interface::addReceiveMetadata(meshtastic_MeshPacket *mp)
 
 void RF95Interface::setStandby()
 {
+#if defined(EMAX_900_TX_OLED)
+    LOG_INFO("EMAX trace %u: setStandby (sending=%d)", millis(), sendingPacket != NULL);
+#endif
     int err = lora->standby();
     if (err != RADIOLIB_ERR_NONE)
         LOG_ERROR("RF95 standby %s%d", radioLibErr, err);
@@ -325,11 +342,21 @@ void RF95Interface::configHardwareForSend()
 {
     setTransmitEnable(true);
 
+#if defined(EMAX_900_TX_OLED)
+    LOG_INFO("EMAX trace %u: TX start PaConfig=0x%02x PaDac=0x%02x", millis(),
+             lora->readReg(RADIOLIB_SX127X_REG_PA_CONFIG), lora->readReg(RADIOLIB_SX1278_REG_PA_DAC));
+    dumpModemRegs("TX");
+#endif
+
     RadioLibInterface::configHardwareForSend();
 }
 
 void RF95Interface::startReceive()
 {
+#if defined(EMAX_900_TX_OLED)
+    LOG_INFO("EMAX trace %u: startReceive (sending=%d) IrqFlags=0x%02x", millis(), sendingPacket != NULL,
+             lora->readReg(RADIOLIB_SX127X_REG_IRQ_FLAGS));
+#endif
     setTransmitEnable(false);
     setStandby();
     int err = lora->startReceive();
