@@ -80,8 +80,16 @@ class RadioLibInterface : public RadioInterface, protected concurrency::Notified
      *
      * We now use 0x2b (so that someday we can possibly use NOT 2b - because that would be funny pun).  We will be staying with
      * this code for a long time.
+     *
+     * Overridable at build time via -D MESHTASTIC_LORA_SYNCWORD. Note that 0x2b is non-standard, and LR11xx radios fail to
+     * detect it from SX127x transmitters (meshtastic/firmware#4775). Setting 0x12 (the Semtech "private network" value)
+     * restores interoperability but makes the node invisible to every stock Meshtastic device, so it is only useful for a
+     * closed mesh where every node is built with the same override.
      */
-    const uint8_t syncWord = 0x2b;
+#ifndef MESHTASTIC_LORA_SYNCWORD
+#define MESHTASTIC_LORA_SYNCWORD 0x2b
+#endif
+    const uint8_t syncWord = MESHTASTIC_LORA_SYNCWORD;
 
     float currentLimit = 100; // 100mA OCP - Should be acceptable for RFM95/SX127x chipset.
 

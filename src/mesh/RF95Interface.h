@@ -72,10 +72,5 @@ class RF95Interface : public RadioLibInterface
   private:
     /** Some boards require GPIO control of tx vs rx paths */
     void setTransmitEnable(bool txon);
-
-#if defined(EMAX_900_TX_OLED)
-    /// Dump LoRa modem registers for TX-vs-RX comparison
-    void dumpModemRegs(const char *what);
-#endif
 };
 #endif

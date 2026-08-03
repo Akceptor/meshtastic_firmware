@@ -5,18 +5,20 @@ Base: upstream meshtastic/firmware @ same branch
 
 ---
 
-## TL;DR for whoever picks this up
+## TL;DR
 
-The **EMAX 900 OLED TX** port boots, drives its display and menus, receives at every
-modem preset, and transmits **only at SF7 (ShortFast)**. At SF8 and above the transmission
-is not detected by any receiver, while reception in the opposite direction keeps working.
+**EMAX 900 OLED TX port works.** It builds, boots, drives the OLED and menus, receives and
+transmits at every modem preset.
 
-The PA drive level was genuinely wrong (15 dB overdrive) and is now fixed — the board
-produces a clean 260 mW at the antenna on the correct frequency. **That fix did not
-resolve the SF>=8 transmit failure.** Everything programmable on the chip has been
-verified correct against a register dump. The remaining fault is not yet identified and
-is most likely below the firmware layer. See "Open Bug" below for the full elimination
-table so nobody repeats the work.
+Two separate faults were found and fixed:
+
+1. **The SX1276 was overdriving the external PA by 15 dB.** Fixed by matching the
+   ExpressLRS drive level. Now yields a clean 260 mW at the antenna.
+2. **SX127x transmissions were invisible to LR11xx receivers.** This is upstream issue
+   [meshtastic/firmware#4775](https://github.com/meshtastic/firmware/issues/4775) —
+   Meshtastic's non-standard 0x2b sync word — and is **not** a defect in this port.
+   Worked around with a build-time sync word override. See "The sync word trap" below,
+   because it will bite anyone testing an SX127x board against an LR11xx peer.
 
 ---
 
@@ -28,7 +30,8 @@ table so nobody repeats the work.
 NeoPixel (GPIO27) + fan (GPIO32) + external PA controlled by DAC
 **HW model ID:** 144 (`meshtastic_HardwareModel_EMAX_900_TX_OLED`)
 **Pin source:** ExpressLRS Targets `TX/EMAX 900 OLED.json`
-**Reference oscillator:** plain crystal, no TCXO (proven — see Open Bug)
+**Reference oscillator:** plain crystal, no TCXO (proven — setting `RegTcxo` bit 4 kills
+the chip's clock and `startReceive()` returns `err=-16`)
 
 | Function | GPIO |
 |---|---|
@@ -44,8 +47,11 @@ NeoPixel (GPIO27) + fan (GPIO32) + external PA controlled by DAC
 
 Joystick ADC values (UP/DOWN/LEFT/RIGHT/OK/IDLE): 2010, 1230, 635, 2730, 0, 4095
 
-**Status:** Builds, boots, OLED and menus fine, RX fine at all presets, TX works only at
-SF7. Blocked — see Open Bug.
+**Status:** Working. TX and RX confirmed at ShortFast and MediumFast against an LR1121
+peer (with matching sync word).
+
+**Pending:** NeoPixel status LED `variant.cpp` not written for EMAX; currently relies on
+default Meshtastic NeoPixel handling.
 
 ### 2. BAYCKRC 900/2400 Dual Band Nano TX (`bayckrc_dual_band`)
 
@@ -74,24 +80,56 @@ Power notes: `power_control: 0` means direct dBm, no DAC. Sub-GHz range -16..+5 
 
 ---
 
-## How the EMAX PA actually works (verified against ExpressLRS source)
+## The sync word trap (read this before debugging any SX127x board)
 
-This took a while to establish and is the part most likely to be re-derived wrongly.
+**Symptom:** an SX127x node transmits at correct power on the correct frequency, and an
+LR11xx node hears nothing at all. The reverse direction works fine. The receiver's
+`rxBad` counter stays at **0** — it is not failing CRC, it never detects a preamble.
 
-1. `"power_control": 3` in the target JSON maps to `POWER_OUTPUT_DACWRITE`
+**Cause:** Meshtastic uses sync word `0x2b`, which is not one of the two values Semtech
+defines (0x12 private, 0x34 LoRaWAN). LR11xx radios fail to detect it from SX127x
+transmitters. Tracked as meshtastic/firmware#4775, open since Sept 2024, still present in
+2.7.x, deferred to 3.0.
+
+**This cost a full debugging session.** It presents as an RF fault and survives every
+RF-level check, because nothing is actually wrong with the transmitter. It also appeared
+SF-dependent here (ShortFast worked, MediumFast and above did not), which made it look
+even more like a modem or analogue problem. Do not trust that pattern.
+
+**Workaround:** `-D MESHTASTIC_LORA_SYNCWORD=0x12` at build time
+(`src/mesh/RadioLibInterface.h`). Defaults to 0x2b, so stock builds are unchanged.
+
+```
+PLATFORMIO_BUILD_FLAGS="-DMESHTASTIC_LORA_SYNCWORD=0x12" pio run -e <env> -t upload
+```
+
+**Every node in the mesh must be built with the same value.** A node built with 0x12 is
+invisible to all stock Meshtastic devices. This is only appropriate for a closed mesh.
+
+**Diagnostic shortcut:** if an SX127x board can't reach a peer, check the peer's radio
+chip *first*. If it's LR11xx, test against an SX126x or SX127x node before investigating
+anything else.
+
+---
+
+## How the EMAX PA works (verified against ExpressLRS source)
+
+This is the part most likely to be re-derived wrongly.
+
+1. `"power_control": 3` maps to `POWER_OUTPUT_DACWRITE`
    (`include/target/Unified_ESP32_TX.h:44`).
 2. The JSON has **no `power_values2`**, so `POWERMGNT::setPower()` never calls
    `Radio.SetOutputPower()` (`lib/POWERMGNT/POWERMGNT.cpp:258-270`). The SX1276's own
-   output level therefore stays at whatever init set.
-3. Init sets it once: `SetOutputPower(SX127X_MAX_OUTPUT_POWER)` where that constant is
+   output level stays at whatever init set.
+3. Init sets it once: `SetOutputPower(SX127X_MAX_OUTPUT_POWER)`, that constant being
    `0b01110000` (`lib/SX127xDriver/SX127x.cpp:83-92`). Masked with `SX127X_PA_POWER_MASK`
    (0x7F) and OR'd with `PA_SELECT_BOOST` gives **RegPaConfig = 0xF0**.
-4. On PA_BOOST, `Pout = 17 - (15 - OutputPower)`. The OutputPower nibble is 0, so the
-   chip transmits at **+2 dBm**. The MaxPower bits (0x70) only matter for RFO.
+4. On PA_BOOST, `Pout = 17 - (15 - OutputPower)`. The OutputPower nibble is 0, so the chip
+   transmits at **+2 dBm**. The MaxPower bits (0x70) only matter for RFO.
 5. All remaining gain comes from the external PA, set by `dacWrite` on APC2 (GPIO26).
 
 So: **SX1276 at +2 dBm, external PA does everything else.** The port originally ran the
-chip at +17 dBm, a 15 dB overdrive of the PA input.
+chip at +17 dBm — a 15 dB overdrive of the PA input.
 
 Also confirmed from ELRS:
 - **PA_BOOST, not RFO** — `radio_rfo_hf` is absent from `EMAX 900 OLED.json`.
@@ -100,8 +138,8 @@ Also confirmed from ELRS:
 - **RXEN only, no TXEN**; RXEN low during TX (`lib/RFAMP/RFAMP_hal.cpp:31`).
 - ELRS never writes `RegTcxo` — the module runs its crystal in default mode.
 
-DAC calibration table now in `getDACandDB()`, taken from ELRS `power_values`
-`[30,40,50,60,80,90,130,225]`, which map 1:1 onto `PowerLevels_e`:
+DAC table in `getDACandDB()`, from ELRS `power_values` `[30,40,50,60,80,90,130,225]`,
+which map 1:1 onto `PowerLevels_e`:
 
 | DAC | ELRS level | dBm |
 |---|---|---|
@@ -114,96 +152,76 @@ DAC calibration table now in `getDACandDB()`, taken from ELRS `power_values`
 | 130 | 1000 mW | 30 |
 | 225 | 2000 mW | 33 |
 
----
-
-## OPEN BUG: EMAX transmits only at SF7
-
-### Symptom
-
-| Direction | SF7 | SF8+ |
-|---|---|---|
-| peer -> EMAX | works | **works** (SF9, SF11, SF12 all confirmed) |
-| EMAX -> peer | works | **fails** |
-
-Confirmed against **two independent receivers**. The peer receives LongFast fine from a
-third device, so the peer's receiver is not at fault.
-
-Critical detail: the receiving side's **`rxBad` stays at 0**. It is not failing CRC — it
-never detects a preamble at all. Nothing arrives that looks like the start of a packet.
-
-### Verified correct — do not re-investigate
-
-| Checked | Method | Result |
-|---|---|---|
-| PA drive level | ELRS source trace | fixed, `PaConfig=0xf0`, ELRS parity |
-| RF output power | power meter | 260 mW at 869 MHz |
-| PA bias current / supply sag | forced DAC=0, PA cold, peer at 30 cm | SF7 still worked, SF9 still failed |
-| Power supply | external powerbank | not USB-port related |
-| Carrier frequency | peer's `Corrected frequency offset` | **0.000000 Hz** |
-| Link margin | peer log | `rxRSSI=-41, rxSNR=14.75` at 30 cm |
-| SF register | `MC2=0x94` at TX | SF9, correct |
-| Bandwidth / coding rate | `MC1=0x82` | BW250, CR4/5, explicit header |
-| LDRO | `MC3=0x04` | bit 3 = 0, correct at SF9 (2.05 ms symbol vs 16 ms threshold) |
-| Sync word | `Sync=0x2b` | correct |
-| IQ inversion | `InvIQ=0x27 InvIQ2=0x1d` | both non-inverted defaults |
-| Detection optimize | `DetOpt=0xc3 DetThr=0x0a` | correct for SF7-12 |
-| Frequency register | `Frf=0xd9619a` | 869.5250 MHz |
-| Transmit truncation | trace timestamps | 171 ms measured vs 120 ms computed — full duration |
-| TxDone | `IrqFlags=0x08` | clean |
-| Firmware interrupting TX | trace of all state changes | nothing touches the radio mid-send |
-| LF/HF mode bit hack | removed it | no change; left removed (stock upstream) |
-| TCXO | set `RegTcxo` bit 4 | radio died, `err=-16` -> **plain crystal, no TCXO** |
-| Reference oscillator quality | logic | ruled out: same VCO receives SF12 fine |
-
-### Theories tried and disproved
-
-- **PA overdrive / saturation** — real defect, fixed, did not resolve the bug.
-- **Supply droop or thermal drift over long key-down** — fails with the PA cold too.
-- **Frequency offset** — the EMAX measures +7155 Hz on receive, but the peer measures
-  **0 Hz** on the EMAX's transmissions. The 7 kHz belongs to the peer's transmitter.
-  Also, the EMAX itself decodes a 7 kHz-offset SF12 packet, so that magnitude is tolerable.
-- **LDRO mismatch** — measured off, which is correct at SF9; it also lives in a register
-  shared by TX and RX, so a mismatch would break the working receive path too.
-- **TX truncated mid-preamble** — the 40 ms/41.5 ms coincidence between ShortFast's total
-  airtime and MediumFast's preamble was compelling, but measurement showed a full 171 ms
-  transmit with a clean TxDone.
-- **Reference oscillator phase noise** — cannot be it. TX and RX share the VCO and
-  reference, and receive works at SF12 with 16 ms symbols.
-
-### Useful context
-
-**ExpressLRS never uses SF above ~9 on this hardware** — short packets, low SF, high duty
-cycle. So "ELRS works fine on this module" is *not* evidence that its transmit path is
-sound at long symbol durations. A hardware limitation that only appears above SF7 would
-never surface in the firmware this module was designed for.
-
-### Suggested next steps
-
-1. **SDR waterfall on 869.525 MHz** during an SF9 transmit. This is the highest-value
-   test by far and the one thing register inspection cannot answer — it shows directly
-   whether the chirp is present, clean and sweeping correctly. Everything else is guesswork
-   until someone looks at the actual waveform.
-2. **ShortSlow (SF8)** — never tested. Brackets the cliff between working and broken.
-   One config change, no firmware.
-3. **Power meter at SF9 vs SF7** — must read identical, since the PA cannot know the
-   spreading factor. If it differs, something physical happens during longer keying.
+Measured 260 mW at the 24 dBm setting, which matches the ELRS 250 mW step.
 
 ---
 
-## Diagnostic instrumentation currently in the tree
+## Bugs fixed
 
-`src/mesh/RF95Interface.cpp` carries EMAX-only tracing, all guarded by
-`#if defined(EMAX_900_TX_OLED)`. It is verbose and should be stripped before any
-upstream PR, but is left in place because the bug is unresolved.
+### EMAX: SX1276 overdriving the external PA
+`RF95_MAX_POWER` was 17, giving `RegPaConfig=0xFF` (+17 dBm) into a PA input that ELRS
+drives at +2 dBm. Now `RF95_MAX_POWER 2` -> `RegPaConfig=0xF0`.
 
-- `EMAX trace <millis>: setTransmitEnable(n)` / `setStandby` / `startReceive`
-- `EMAX trace <millis>: TX start PaConfig=.. PaDac=..`
-- `EMAX regs [TX|RX] ...` — full modem register dump via `dumpModemRegs()`
+### EMAX: `tx_power == 0` fallback pinned the DAC
+`config.lora.tx_power ? config.lora.tx_power : power` used `power` as the fallback, but
+`power` is the SX1276 driver level (now always 2), not the requested EIRP. That would have
+locked the PA to the default table row. Now falls back to the region power limit.
 
-Comparing the `TX start` timestamp against the following `startReceive` timestamp gives
-the **measured** transmit duration. Note `Packet TX: NNNms` in the standard log is
-`getPacketTime()` — computed from the firmware's own SF/BW variables, not measured, so it
-cannot detect a truncated transmission.
+### EMAX: DAC value overflowed a signed type
+`int8_t powerDAC` cannot hold the top DAC value of 225. Changed to `uint8_t`.
+
+### EMAX: RFO vs PA_BOOST mismatch
+`USE_RF95_RFO` routed output to the RFO pad; the external PA input is on PA_BOOST.
+Removed — PA_BOOST is the default. Confirmed against the ELRS target JSON.
+
+### EMAX: speculative LowFrequencyModeOn hack removed
+A read-modify-write clearing `RegOpMode` bit 3 after `begin()` was added on the theory
+that 869 MHz needs HF mode. Never validated, deviates from stock upstream (which works at
+869 MHz on every other SX1276 board), and removing it changed nothing.
+
+### LR11x0Interface: getVersionInfo aborted init (BAYCKRC)
+After a successful `lora.begin()`, `getVersionInfo()` fails on LR1120 because WiFi/GNSS
+aren't initialised. The result was stored in `res`, so `setCRC`, `setDCDC` and
+`startReceive` were all skipped and init returned false. Now uses a separate `verRes`.
+
+### BAYCKRC: USE_LR1121 -> USE_LR1120
+Board has an LR1120 (device ID 0x02). `findChip()` retried 10x then returned
+`-2 CHIP_NOT_FOUND`.
+
+### BAYCKRC: NeoPixel RMT conflict
+`ENABLE_AMBIENTLIGHTING` claimed the RMT channel on GPIO12 before `lateInitVariant()`
+could, so the second `pixel.begin()` failed silently. Omitted deliberately;
+`variant.cpp` is the sole NeoPixel controller.
+
+---
+
+## Other changes
+
+### TX power menu (`src/graphics/draw/MenuHandler.cpp`)
+Added low-power steps 10 / 14 / 17 dBm, matching the ELRS DAC rows 30 / 40 / 50
+(10 / 25 / 50 mW). Previously the menu only offered 20-28 dBm, so the bottom half of the
+DAC table was unreachable from the device.
+
+Replaced the switch plus 9-branch if-chain with a `txPowerDbm[]` lookup, so adding steps
+is now a one-line edit. Also fixed the pre-select: when `tx_power` is 0 or off-list the
+menu now highlights "Back" rather than falsely displaying 27 dBm.
+
+This file is shared by all variants — the new steps appear on every board's menu. Harmless
+(10-17 dBm is valid everywhere) but worth knowing before upstreaming.
+
+Note the legacy mW labels are inconsistent with their own dBm values ("70 mW (20 dBm)" —
+20 dBm is 100 mW). They appear to be empirical measurements against an older power table.
+The three new labels are honest conversions.
+
+### On-device menu vs app power setting
+Both write the same field, `config.lora.tx_power`. The menu sets it directly then calls
+`service->reloadConfig(SEGMENT_CONFIG)`; the app goes through `AdminModule.cpp:1414`.
+Last writer wins, both take effect immediately via `reconfigure()`, which rewrites the
+APC2 DAC at `RF95Interface.cpp`. Neither is authoritative over the other.
+
+`getDACandDB()` interpolates between table rows and returns the default (DAC 50, ~50 mW)
+for anything outside 10-33 dBm — so a sub-10 dBm request fails *upward*, not downward.
+Region limits cap the top end well below 33.
 
 ---
 
@@ -226,51 +244,13 @@ cannot detect a truncated transmission.
 | `src/mesh/generated/meshtastic/mesh.pb.h` | HW model enums 144, 145 |
 | `src/platform/esp32/architecture.h` | `HW_VENDOR` mappings |
 | `src/mesh/LR11x0Interface.cpp` | `getVersionInfo` result in separate `verRes` |
-| `src/mesh/RF95Interface.cpp` | EMAX DAC table, power fallback, tracing |
-| `src/mesh/RF95Interface.h` | `dumpModemRegs()` declaration |
+| `src/mesh/RF95Interface.cpp` | EMAX DAC table, power fallback |
+| `src/mesh/RadioLibInterface.h` | `MESHTASTIC_LORA_SYNCWORD` build override |
+| `src/graphics/draw/MenuHandler.cpp` | TX power menu low steps |
 
-The EMAX build also trims a lot of unused modules via `MESHTASTIC_EXCLUDE_*` in its
-`platformio.ini` to keep the OTA image small. Those exclusions are unrelated to the open
-bug and work correctly.
-
----
-
-## Bugs fixed along the way
-
-### EMAX: SX1276 overdriving the external PA
-`RF95_MAX_POWER` was 17, giving `RegPaConfig=0xFF` (+17 dBm) into a PA input that ELRS
-drives at +2 dBm. Now `RF95_MAX_POWER 2` -> `RegPaConfig=0xF0`. Yields a clean 260 mW.
-
-### EMAX: `tx_power == 0` fallback pinned the DAC
-`config.lora.tx_power ? config.lora.tx_power : power` used `power` as the fallback, but
-`power` is the SX1276 driver level (now always 2), not the requested EIRP. That would have
-locked the PA to the default table row forever. Now falls back to the region power limit.
-
-### EMAX: DAC value overflowed a signed type
-`int8_t powerDAC` cannot hold the top DAC value of 225. Changed to `uint8_t`.
-
-### EMAX: RFO vs PA_BOOST mismatch
-`USE_RF95_RFO` routed output to the RFO pad; the external PA input is on PA_BOOST.
-Removed, PA_BOOST is the default. Confirmed against the ELRS target JSON.
-
-### EMAX: speculative LowFrequencyModeOn hack removed
-A read-modify-write clearing `RegOpMode` bit 3 after `begin()` was added on the theory
-that 869 MHz needs HF mode. It was never validated, deviates from stock upstream (which
-works at 869 MHz on every other SX1276 board), and removing it changed nothing. Gone.
-
-### LR11x0Interface: getVersionInfo aborted init (BAYCKRC)
-After a successful `lora.begin()`, `getVersionInfo()` fails on LR1120 because WiFi/GNSS
-aren't initialised. The result was stored in `res`, so `setCRC`, `setDCDC` and
-`startReceive` were all skipped and init returned false. Now uses a separate `verRes`.
-
-### BAYCKRC: USE_LR1121 -> USE_LR1120
-Board has an LR1120 (device ID 0x02). `findChip()` retried 10x then returned
-`-2 CHIP_NOT_FOUND`.
-
-### BAYCKRC: NeoPixel RMT conflict
-`ENABLE_AMBIENTLIGHTING` claimed the RMT channel on GPIO12 before `lateInitVariant()`
-could, so the second `pixel.begin()` failed silently. Omitted deliberately;
-`variant.cpp` is the sole NeoPixel controller.
+The EMAX build trims unused modules via `MESHTASTIC_EXCLUDE_*` in its `platformio.ini` to
+keep the OTA image small. Those exclusions work correctly and were never implicated in
+any of the above.
 
 ---
 
@@ -280,9 +260,13 @@ could, so the second `pixel.begin()` failed silently. Omitted deliberately;
   `esp32_base` `build_src_filter` auto-compiles
   `src/platform/extra_variants/<board>/variant.cpp` if present.
 - `lateInitVariant()` runs after all subsystems init — safe place for NeoPixel and radio
-  checks. `earlyInitVariant()` runs before, use only for strapping pins.
+  checks. `earlyInitVariant()` runs before; use only for strapping pins.
 - RadioLib SPI init: `SPI.begin(LORA_SCK, LORA_MISO, LORA_MOSI, LORA_CS)` in `main.cpp`,
   using the `LORA_*` defines from variant.h.
 - `RadioInterface::limitPower()` supports a `TX_GAIN_LORA` offset for fixed-gain external
   PAs. This board uses the Bandit-style `getDACandDB()` path instead, because its PA gain
   is variable via APC2.
+- `Packet TX: NNNms` in the log is `getPacketTime()` — **computed** from the firmware's SF
+  and BW variables, not measured. It cannot detect a truncated transmission. To measure
+  actual transmit duration, timestamp `configHardwareForSend()` against the following
+  `startReceive()`.

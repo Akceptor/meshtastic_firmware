@@ -257,51 +257,35 @@ void menuHandler::deviceRolePicker()
 
 void menuHandler::txPowerPicker()
 {
-    static const char *optionsArray[] = {"Back",          "70 mW (20 dBm)",  "100 mW (21 dBm)", "140 mW (22 dBm)",
-                                          "200 mW (23 dBm)", "260 mW (24 dBm)", "350 mW (25 dBm)", "400 mW (26 dBm)",
-                                          "460 mW (27 dBm)", "580 mW PB (28)"};
-    enum optionsNumbers { Back = 0, P20 = 1, P21 = 2, P22 = 3, P23 = 4, P24 = 5, P25 = 6, P26 = 7, P27 = 8, P28 = 9 };
+    // Entry 0 is "Back"; every later entry maps 1:1 onto txPowerDbm below.
+    // The low steps match the ExpressLRS power_values rows used by getDACandDB()
+    // on DAC-controlled PA boards (10/25/50 mW = DAC 30/40/50).
+    static const char *optionsArray[] = {"Back",            "10 mW (10 dBm)",  "25 mW (14 dBm)",  "50 mW (17 dBm)",
+                                         "70 mW (20 dBm)",  "100 mW (21 dBm)", "140 mW (22 dBm)", "200 mW (23 dBm)",
+                                         "260 mW (24 dBm)", "350 mW (25 dBm)", "400 mW (26 dBm)", "460 mW (27 dBm)",
+                                         "580 mW PB (28)"};
+    static const int8_t txPowerDbm[] = {0, 10, 14, 17, 20, 21, 22, 23, 24, 25, 26, 27, 28};
+    const int optionsCount = sizeof(optionsArray) / sizeof(optionsArray[0]);
+    enum optionsNumbers { Back = 0 };
     BannerOverlayOptions bannerOptions;
     bannerOptions.message = "TX Output Power";
     bannerOptions.optionsArrayPtr = optionsArray;
-    bannerOptions.optionsCount = 10;
-    // Pre-select current setting
-    switch (config.lora.tx_power) {
-    case 20: bannerOptions.InitialSelected = P20; break;
-    case 21: bannerOptions.InitialSelected = P21; break;
-    case 22: bannerOptions.InitialSelected = P22; break;
-    case 23: bannerOptions.InitialSelected = P23; break;
-    case 24: bannerOptions.InitialSelected = P24; break;
-    case 25: bannerOptions.InitialSelected = P25; break;
-    case 26: bannerOptions.InitialSelected = P26; break;
-    case 27: bannerOptions.InitialSelected = P27; break;
-    case 28: bannerOptions.InitialSelected = P28; break;
-    default: bannerOptions.InitialSelected = P27; break;
+    bannerOptions.optionsCount = optionsCount;
+    // Pre-select current setting, falling back to Back when tx_power is unset or off-list
+    bannerOptions.InitialSelected = Back;
+    for (int i = 1; i < optionsCount; i++) {
+        if (txPowerDbm[i] == config.lora.tx_power) {
+            bannerOptions.InitialSelected = i;
+            break;
+        }
     }
     bannerOptions.bannerCallback = [](int selected) -> void {
         if (selected == Back) {
             menuHandler::menuQueue = menuHandler::LoraMenu;
             screen->runNow();
             return;
-        } else if (selected == P20) {
-            config.lora.tx_power = 20;
-        } else if (selected == P21) {
-            config.lora.tx_power = 21;
-        } else if (selected == P22) {
-            config.lora.tx_power = 22;
-        } else if (selected == P23) {
-            config.lora.tx_power = 23;
-        } else if (selected == P24) {
-            config.lora.tx_power = 24;
-        } else if (selected == P25) {
-            config.lora.tx_power = 25;
-        } else if (selected == P26) {
-            config.lora.tx_power = 26;
-        } else if (selected == P27) {
-            config.lora.tx_power = 27;
-        } else if (selected == P28) {
-            config.lora.tx_power = 28;
         }
+        config.lora.tx_power = txPowerDbm[selected];
         service->reloadConfig(SEGMENT_CONFIG);
     };
     screen->showOverlayBanner(bannerOptions);

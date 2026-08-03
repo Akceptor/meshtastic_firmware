@@ -101,27 +101,9 @@ RF95Interface::RF95Interface(LockingArduinoHal *hal, RADIOLIB_PIN_TYPE cs, RADIO
     LOG_DEBUG("RF95Interface(cs=%d, irq=%d, rst=%d, busy=%d)", cs, irq, rst, busy);
 }
 
-#if defined(EMAX_900_TX_OLED)
-/** Dump the LoRa modem registers so a TX-time snapshot can be diffed against an RX-time one. */
-void RF95Interface::dumpModemRegs(const char *what)
-{
-    uint32_t frf = ((uint32_t)lora->readReg(0x06) << 16) | ((uint32_t)lora->readReg(0x07) << 8) | lora->readReg(0x08);
-    LOG_INFO("EMAX regs [%s] OpMode=0x%02x Frf=0x%06x (%.4f MHz) MC1=0x%02x MC2=0x%02x MC3=0x%02x", what,
-             lora->readReg(0x01), frf, (double)frf * 32000000.0 / 524288.0 / 1000000.0, lora->readReg(0x1D),
-             lora->readReg(0x1E), lora->readReg(0x26));
-    LOG_INFO("EMAX regs [%s] Preamble=%u PayloadLen=%u HopPeriod=%u Sync=0x%02x DetOpt=0x%02x DetThr=0x%02x "
-             "InvIQ=0x%02x InvIQ2=0x%02x",
-             what, ((uint16_t)lora->readReg(0x20) << 8) | lora->readReg(0x21), lora->readReg(0x22), lora->readReg(0x24),
-             lora->readReg(0x39), lora->readReg(0x31), lora->readReg(0x37), lora->readReg(0x33), lora->readReg(0x3B));
-}
-#endif
-
 /** Some boards require GPIO control of tx vs rx paths */
 void RF95Interface::setTransmitEnable(bool txon)
 {
-#if defined(EMAX_900_TX_OLED)
-    LOG_INFO("EMAX trace %u: setTransmitEnable(%d)", millis(), txon ? 1 : 0);
-#endif
 #ifdef RF95_TXEN
     digitalWrite(RF95_TXEN, txon ? 1 : 0);
 #elif ARCH_PORTDUINO
@@ -322,9 +304,6 @@ void RF95Interface::addReceiveMetadata(meshtastic_MeshPacket *mp)
 
 void RF95Interface::setStandby()
 {
-#if defined(EMAX_900_TX_OLED)
-    LOG_INFO("EMAX trace %u: setStandby (sending=%d)", millis(), sendingPacket != NULL);
-#endif
     int err = lora->standby();
     if (err != RADIOLIB_ERR_NONE)
         LOG_ERROR("RF95 standby %s%d", radioLibErr, err);
@@ -342,21 +321,11 @@ void RF95Interface::configHardwareForSend()
 {
     setTransmitEnable(true);
 
-#if defined(EMAX_900_TX_OLED)
-    LOG_INFO("EMAX trace %u: TX start PaConfig=0x%02x PaDac=0x%02x", millis(),
-             lora->readReg(RADIOLIB_SX127X_REG_PA_CONFIG), lora->readReg(RADIOLIB_SX1278_REG_PA_DAC));
-    dumpModemRegs("TX");
-#endif
-
     RadioLibInterface::configHardwareForSend();
 }
 
 void RF95Interface::startReceive()
 {
-#if defined(EMAX_900_TX_OLED)
-    LOG_INFO("EMAX trace %u: startReceive (sending=%d) IrqFlags=0x%02x", millis(), sendingPacket != NULL,
-             lora->readReg(RADIOLIB_SX127X_REG_IRQ_FLAGS));
-#endif
     setTransmitEnable(false);
     setStandby();
     int err = lora->startReceive();
