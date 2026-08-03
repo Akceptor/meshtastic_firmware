@@ -138,21 +138,32 @@ Also confirmed from ELRS:
 - **RXEN only, no TXEN**; RXEN low during TX (`lib/RFAMP/RFAMP_hal.cpp:31`).
 - ELRS never writes `RegTcxo` — the module runs its crystal in default mode.
 
-DAC table in `getDACandDB()`, from ELRS `power_values` `[30,40,50,60,80,90,130,225]`,
-which map 1:1 onto `PowerLevels_e`:
+### PA calibration — measured, not from the ELRS labels
 
-| DAC | ELRS level | dBm |
+The ExpressLRS `power_values` labels turned out to be **~4.4 dB optimistic** on this
+board. ELRS calls DAC 50 its "50 mW" step; it actually produces 147 mW. The table in
+`getDACandDB()` is therefore built from measurements, taken with a power meter at 869 MHz
+with the PA on a powerbank and the chip at +2 dBm:
+
+| DAC | Measured | Actual dBm |
 |---|---|---|
-| 30 | 10 mW | 10 |
-| 40 | 25 mW | 14 |
-| 50 | 50 mW | 17 |
-| 60 | 100 mW | 20 |
-| 80 | 250 mW | 24 |
-| 90 | 500 mW | 27 |
-| 130 | 1000 mW | 30 |
-| 225 | 2000 mW | 33 |
+| 50 | 147 mW | 21.7 |
+| 60 | 260 mW | 24.2 |
+| 70 | 437 mW | 26.4 |
+| 75 | 542 mW | 27.3 |
 
-Measured 260 mW at the 24 dBm setting, which matches the ELRS 250 mW step.
+About **0.25 dB per DAC unit**, compressing to ~0.19 dB/unit above DAC 70.
+
+Rows outside DAC 50-75 are extrapolated and want re-measuring:
+
+- **Below DAC 50** unverified. DAC 30 is the ELRS minimum and still gives roughly 17 dBm,
+  so this PA cannot go quiet. Requests under 17 dBm clamp to that floor, which means the
+  menu's 10 and 14 dBm entries are not reachable on this board.
+- **Above DAC 75** the PA is compressing, so the 30 dBm row is a guess.
+
+An earlier revision of the variant README listed a completely different DAC table
+(DAC 25 = 20 dBm etc). Those readings were taken while the SX1276 was overdriving the PA
+at +17 dBm and no longer apply.
 
 ---
 

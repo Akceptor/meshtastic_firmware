@@ -65,21 +65,28 @@ DACDB getDACandDB(uint8_t dbm)
     DACDB defaultValue = {165, 2};
 #endif
 #ifdef EMAX_900_TX_OLED
-    // DAC values are ExpressLRS "EMAX 900 OLED.json" power_values [30,40,50,60,80,90,130,225],
-    // which map 1:1 onto PowerLevels_e (10/25/50/100/250/500/1000/2000 mW).
+    // Measured calibration, not the ExpressLRS power_values labels - those turned out to be
+    // ~4.4 dB optimistic on this board (ELRS calls DAC 50 "50 mW"; it actually produces 147 mW).
+    //
+    // Power meter at 869 MHz, PA fed from a powerbank:
+    //   DAC 50 -> 147 mW (21.7 dBm)    DAC 70 -> 437 mW (26.4 dBm)
+    //   DAC 60 -> 260 mW (24.2 dBm)    DAC 75 -> 542 mW (27.3 dBm)
+    // Slope is ~0.25 dB per DAC unit, compressing to ~0.19 dB/unit above DAC 70.
+    //
     // .db is always 2: ELRS keeps the SX1276 at PA_BOOST OutputPower=0 (+2 dBm) and lets the
     // external PA supply all gain. Anything higher overdrives the PA input.
     dbmToDACDB[] = {
-        {10, {30, 2}},  // 10mW
-        {14, {40, 2}},  // 25mW
-        {17, {50, 2}},  // 50mW
-        {20, {60, 2}},  // 100mW
-        {24, {80, 2}},  // 250mW
-        {27, {90, 2}},  // 500mW
-        {30, {130, 2}}, // 1000mW
-        {33, {225, 2}}  // 2000mW
+        {10, {30, 2}}, // PA floor - DAC 30 is the ELRS minimum and still yields roughly 17 dBm,
+                       // so anything requested below that lands here rather than going quieter
+        {17, {31, 2}}, // EXTRAPOLATED - below the measured range, likely optimistic
+        {20, {43, 2}}, // EXTRAPOLATED
+        {22, {51, 2}}, // measured
+        {24, {59, 2}}, // measured
+        {26, {68, 2}}, // measured
+        {27, {73, 2}}, // measured
+        {30, {89, 2}}  // EXTRAPOLATED - above the measured range, PA is compressing here
     };
-    DACDB defaultValue = {50, 2}; // ELRS power_default = index 2 = 50mW
+    DACDB defaultValue = {51, 2}; // 22 dBm, lowest measured point
 #endif
     const int numValues = sizeof(dbmToDACDB) / sizeof(dbmToDACDB[0]);
 

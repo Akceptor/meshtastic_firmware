@@ -260,10 +260,13 @@ void menuHandler::txPowerPicker()
     // Entry 0 is "Back"; every later entry maps 1:1 onto txPowerDbm below.
     // The low steps match the ExpressLRS power_values rows used by getDACandDB()
     // on DAC-controlled PA boards (10/25/50 mW = DAC 30/40/50).
+    // Labels are true dBm -> mW conversions. The previous ones were empirical readings from a
+    // particular board and disagreed with their own dBm values (e.g. "70 mW (20 dBm)"; 20 dBm
+    // is 100 mW). What a given setting actually radiates depends on the board's PA calibration.
     static const char *optionsArray[] = {"Back",            "10 mW (10 dBm)",  "25 mW (14 dBm)",  "50 mW (17 dBm)",
-                                         "70 mW (20 dBm)",  "100 mW (21 dBm)", "140 mW (22 dBm)", "200 mW (23 dBm)",
-                                         "260 mW (24 dBm)", "350 mW (25 dBm)", "400 mW (26 dBm)", "460 mW (27 dBm)",
-                                         "580 mW PB (28)"};
+                                         "100 mW (20 dBm)", "126 mW (21 dBm)", "158 mW (22 dBm)", "200 mW (23 dBm)",
+                                         "251 mW (24 dBm)", "316 mW (25 dBm)", "398 mW (26 dBm)", "501 mW (27 dBm)",
+                                         "631 mW (28 dBm)"};
     static const int8_t txPowerDbm[] = {0, 10, 14, 17, 20, 21, 22, 23, 24, 25, 26, 27, 28};
     const int optionsCount = sizeof(optionsArray) / sizeof(optionsArray[0]);
     enum optionsNumbers { Back = 0 };
