@@ -4,16 +4,31 @@ Binaries built from this branch. The suffix records any non-default build flags.
 
 ## Contents
 
+### 2.7.26.8f1666d (current)
+
 | File | Board | Notes |
 |---|---|---|
-| `firmware-emax_900_tx_oled-2.7.26.6451195-sync0x12.factory.bin` | Emax 900 OLED TX | Full image incl. bootloader + partitions. Flash to offset `0x0`. |
-| `firmware-emax_900_tx_oled-2.7.26.6451195-sync0x12.ota.bin` | Emax 900 OLED TX | App only. For OTA, or serial flash to offset `0x10000`. |
+| `firmware-emax_900_tx_oled-2.7.26.8f1666d-sync0x12.factory.bin` | Emax 900 OLED TX | Full image incl. bootloader + partitions. Flash to offset `0x0`. |
+| `firmware-emax_900_tx_oled-2.7.26.8f1666d-sync0x12.ota.bin` | Emax 900 OLED TX | App only. For OTA, or serial flash to offset `0x10000`. |
+| `firmware-emax_900_tx_oled-2.7.26.8f1666d-sync0x2b.factory.bin` | Emax 900 OLED TX | Full image, stock Meshtastic sync word. Flash to offset `0x0`. |
+| `firmware-emax_900_tx_oled-2.7.26.8f1666d-sync0x2b.ota.bin` | Emax 900 OLED TX | App only, stock sync word. For OTA, or serial flash to offset `0x10000`. |
 
 Built with:
 
 ```
+# sync0x12 (LR11xx-compatible):
 PLATFORMIO_BUILD_FLAGS="-DMESHTASTIC_LORA_SYNCWORD=0x12" pio run -e emax_900_tx_oled
+
+# sync0x2b (stock Meshtastic default):
+pio run -e emax_900_tx_oled
 ```
+
+### 2.7.26.6451195 (archived)
+
+| File | Board | Notes |
+|---|---|---|
+| `firmware-emax_900_tx_oled-2.7.26.6451195-sync0x12.factory.bin` | Emax 900 OLED TX | Full image incl. bootloader + partitions. Flash to offset `0x0`. |
+| `firmware-emax_900_tx_oled-2.7.26.6451195-sync0x12.ota.bin` | Emax 900 OLED TX | App only. For OTA, or serial flash to offset `0x10000`. |
 
 ## `sync0x12` — read this before flashing
 
