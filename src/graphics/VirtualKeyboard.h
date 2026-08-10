@@ -9,14 +9,12 @@ namespace graphics
 {
 
 enum VirtualKeyType { VK_CHAR, VK_BACKSPACE, VK_ENTER, VK_SHIFT, VK_ESC, VK_SPACE };
+enum KeyboardLayoutId { KB_LAYOUT_EN, KB_LAYOUT_UA };
 
 struct VirtualKey {
-    char character;
+    const char *label;    // UTF-8 text inserted/shown for this key; nullptr = empty slot
+    const char *altLabel; // Long-press alternate (e.g. uppercase); nullptr = same as label
     VirtualKeyType type;
-    uint8_t x;
-    uint8_t y;
-    uint8_t width;
-    uint8_t height;
 };
 
 class VirtualKeyboard
@@ -43,9 +41,12 @@ class VirtualKeyboard
     void resetTimeout();
     bool isTimedOut() const;
 
+    // Cycle to the next keyboard layout (e.g. English -> Ukrainian -> English)
+    void switchLayout();
+
   private:
     static const uint8_t KEYBOARD_ROWS = 4;
-    static const uint8_t KEYBOARD_COLS = 11;
+    static const uint8_t KEYBOARD_COLS = 12;
     static const uint8_t KEY_WIDTH = 9;
     static const uint8_t KEY_HEIGHT = 9;        // Compressed to fit 4 rows on 64px displays
     static const uint8_t KEYBOARD_START_Y = 26; // Start just below input box bottom
@@ -59,6 +60,8 @@ class VirtualKeyboard
     uint8_t cursorRow;
     uint8_t cursorCol;
 
+    KeyboardLayoutId currentLayout = KB_LAYOUT_EN;
+
     // Timeout management for auto-exit
     uint32_t lastActivityTime;
     static const uint32_t TIMEOUT_MS = 60000; // 1 minute timeout
@@ -71,8 +74,8 @@ class VirtualKeyboard
     // Unified cursor movement helper
     void moveCursorDelta(int dRow, int dCol);
 
-    char getCharForKey(const VirtualKey &key, bool isLongPress = false);
-    void insertCharacter(char c);
+    const char *getLabelForKey(const VirtualKey &key, bool isLongPress = false);
+    void insertText(const char *text);
     void deleteCharacter();
     void submitText();
 };

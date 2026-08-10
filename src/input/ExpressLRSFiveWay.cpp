@@ -164,9 +164,14 @@ void ExpressLRSFiveWay::determineAction(KeyType key, PressLength length)
         break;
 
     case UP:
-        if (length == LONG)
-            toggleGPS();
-        else
+        if (length == LONG) {
+            // While the on-screen keyboard / canned message UI is up, repurpose this
+            // long-press to cycle keyboard layouts instead of toggling GPS.
+            if (inCannedMessageMenu())
+                sendKey(INPUT_BROKER_ALT_LONG);
+            else
+                toggleGPS();
+        } else
             sendKey(INPUT_BROKER_UP);
         break;
 

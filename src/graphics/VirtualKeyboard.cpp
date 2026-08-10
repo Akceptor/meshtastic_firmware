@@ -6,10 +6,33 @@
 #include "graphics/SharedUIDisplay.h"
 #include "main.h"
 #include <Arduino.h>
+#include <cstring>
 #include <vector>
 
 namespace graphics
 {
+
+namespace
+{
+// Compact per-key definition used to build the runtime `keyboard` grid.
+// label/alt are UTF-8 C strings so non-ASCII (Cyrillic) keys render through
+// the normal UTF-8 -> font-table pipeline (OLEDDisplay::drawString) instead
+// of needing raw single-byte codepage tricks.
+struct KeyDef {
+    const char *label; // inserted/shown text; nullptr for action keys (BACK/ENTER/SPACE/ESC)
+    VirtualKeyType type;
+    const char *alt; // long-press alternate (nullptr = none)
+};
+
+// OLEDDisplay::getStringWidth(const char*) implicitly converts to the String
+// overload, which measures with utf8=false -- each byte of a multi-byte UTF-8
+// character (e.g. Cyrillic) is then treated as its own glyph, inflating the
+// result. drawString() itself decodes UTF-8 correctly; measuring must match it.
+uint16_t utf8StringWidth(OLEDDisplay *display, const char *text)
+{
+    return display->getStringWidth(text, (uint16_t)strlen(text), true);
+}
+} // namespace
 
 VirtualKeyboard::VirtualKeyboard() : cursorRow(0), cursorCol(0), lastActivityTime(millis())
 {
@@ -23,45 +46,117 @@ VirtualKeyboard::~VirtualKeyboard() {}
 
 void VirtualKeyboard::initializeKeyboard()
 {
-    // New 4 row, 11 column keyboard layout:
-    static const char LAYOUT[KEYBOARD_ROWS][KEYBOARD_COLS] = {{'1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '\b'},
-                                                              {'q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p', '\n'},
-                                                              {'a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l', ';', ' '},
-                                                              {'z', 'x', 'c', 'v', 'b', 'n', 'm', '.', ',', '?', '\x1b'}};
+    // English (QWERTY), 4 rows x 12 columns.
+    static const KeyDef LAYOUT_EN[KEYBOARD_ROWS][KEYBOARD_COLS] = {
+        {{"1", VK_CHAR, nullptr},
+         {"2", VK_CHAR, nullptr},
+         {"3", VK_CHAR, nullptr},
+         {"4", VK_CHAR, nullptr},
+         {"5", VK_CHAR, nullptr},
+         {"6", VK_CHAR, nullptr},
+         {"7", VK_CHAR, nullptr},
+         {"8", VK_CHAR, nullptr},
+         {"9", VK_CHAR, nullptr},
+         {"0", VK_CHAR, nullptr},
+         {"'", VK_CHAR, nullptr},
+         {nullptr, VK_BACKSPACE, nullptr}},
+        {{"q", VK_CHAR, "Q"},
+         {"w", VK_CHAR, "W"},
+         {"e", VK_CHAR, "E"},
+         {"r", VK_CHAR, "R"},
+         {"t", VK_CHAR, "T"},
+         {"y", VK_CHAR, "Y"},
+         {"u", VK_CHAR, "U"},
+         {"i", VK_CHAR, "I"},
+         {"o", VK_CHAR, "O"},
+         {"p", VK_CHAR, "P"},
+         {"-", VK_CHAR, nullptr},
+         {nullptr, VK_ENTER, nullptr}},
+        {{"a", VK_CHAR, "A"},
+         {"s", VK_CHAR, "S"},
+         {"d", VK_CHAR, "D"},
+         {"f", VK_CHAR, "F"},
+         {"g", VK_CHAR, "G"},
+         {"h", VK_CHAR, "H"},
+         {"j", VK_CHAR, "J"},
+         {"k", VK_CHAR, "K"},
+         {"l", VK_CHAR, "L"},
+         {";", VK_CHAR, nullptr},
+         {"_", VK_CHAR, nullptr},
+         {nullptr, VK_SPACE, nullptr}},
+        {{"z", VK_CHAR, "Z"},
+         {"x", VK_CHAR, "X"},
+         {"c", VK_CHAR, "C"},
+         {"v", VK_CHAR, "V"},
+         {"b", VK_CHAR, "B"},
+         {"n", VK_CHAR, "N"},
+         {"m", VK_CHAR, "M"},
+         {".", VK_CHAR, nullptr},
+         {",", VK_CHAR, nullptr},
+         {"?", VK_CHAR, "/"},
+         {"!", VK_CHAR, nullptr},
+         {nullptr, VK_ESC, nullptr}}};
 
-    // Derive layout dimensions and assert they match the configured keyboard grid
-    constexpr int LAYOUT_ROWS = (int)(sizeof(LAYOUT) / sizeof(LAYOUT[0]));
-    constexpr int LAYOUT_COLS = (int)(sizeof(LAYOUT[0]) / sizeof(LAYOUT[0][0]));
-    static_assert(LAYOUT_ROWS == KEYBOARD_ROWS, "LAYOUT rows must equal KEYBOARD_ROWS");
-    static_assert(LAYOUT_COLS == KEYBOARD_COLS, "LAYOUT cols must equal KEYBOARD_COLS");
+    // Ukrainian (JCUKEN), 4 rows x 12 columns. Letters are plain UTF-8 string
+    // literals so they render through the normal UTF-8 font pipeline (needs
+    // OLED_UA so FONT_SMALL/etc resolve to the Cyrillic-capable font).
+    // Omits the rare letter "ge with upturn" (~50 native words); approximate with the plain "ge".
+    static const KeyDef LAYOUT_UA[KEYBOARD_ROWS][KEYBOARD_COLS] = {
+        {{"1", VK_CHAR, nullptr},
+         {"2", VK_CHAR, nullptr},
+         {"3", VK_CHAR, nullptr},
+         {"4", VK_CHAR, nullptr},
+         {"5", VK_CHAR, nullptr},
+         {"6", VK_CHAR, nullptr},
+         {"7", VK_CHAR, nullptr},
+         {"8", VK_CHAR, nullptr},
+         {"9", VK_CHAR, nullptr},
+         {"0", VK_CHAR, nullptr},
+         {"'", VK_CHAR, nullptr},
+         {nullptr, VK_BACKSPACE, nullptr}},
+        {{"й", VK_CHAR, "Й"},
+         {"ц", VK_CHAR, "Ц"},
+         {"у", VK_CHAR, "У"},
+         {"к", VK_CHAR, "К"},
+         {"е", VK_CHAR, "Е"},
+         {"н", VK_CHAR, "Н"},
+         {"г", VK_CHAR, "Г"},
+         {"ш", VK_CHAR, "Ш"},
+         {"щ", VK_CHAR, "Щ"},
+         {"з", VK_CHAR, "З"},
+         {"х", VK_CHAR, "Х"},
+         {nullptr, VK_ENTER, nullptr}},
+        {{"ф", VK_CHAR, "Ф"},
+         {"і", VK_CHAR, "І"},
+         {"в", VK_CHAR, "В"},
+         {"а", VK_CHAR, "А"},
+         {"п", VK_CHAR, "П"},
+         {"р", VK_CHAR, "Р"},
+         {"о", VK_CHAR, "О"},
+         {"л", VK_CHAR, "Л"},
+         {"д", VK_CHAR, "Д"},
+         {"ж", VK_CHAR, "Ж"},
+         {"є", VK_CHAR, "Є"},
+         {nullptr, VK_SPACE, nullptr}},
+        {{"я", VK_CHAR, "Я"},
+         {"ч", VK_CHAR, "Ч"},
+         {"с", VK_CHAR, "С"},
+         {"м", VK_CHAR, "М"},
+         {"и", VK_CHAR, "И"},
+         {"т", VK_CHAR, "Т"},
+         {"ь", VK_CHAR, "Ь"},
+         {"б", VK_CHAR, "Б"},
+         {"ю", VK_CHAR, "Ю"},
+         {",", VK_CHAR, "."},
+         {"ї", VK_CHAR, "Ї"},
+         {nullptr, VK_ESC, nullptr}}};
 
-    // Initialize all keys to empty first
-    for (int row = 0; row < LAYOUT_ROWS; row++) {
-        for (int col = 0; col < LAYOUT_COLS; col++) {
-            keyboard[row][col] = {0, VK_CHAR, 0, 0, 0, 0};
-        }
-    }
+    const KeyDef(*LAYOUT)[KEYBOARD_COLS] = (currentLayout == KB_LAYOUT_UA) ? LAYOUT_UA : LAYOUT_EN;
 
-    // Fill keyboard from the 2D layout
-    for (int row = 0; row < LAYOUT_ROWS; row++) {
-        for (int col = 0; col < LAYOUT_COLS; col++) {
-            char ch = LAYOUT[row][col];
-            // No empty slots in the simplified layout
-
-            VirtualKeyType type = VK_CHAR;
-            if (ch == '\b') {
-                type = VK_BACKSPACE;
-            } else if (ch == '\n') {
-                type = VK_ENTER;
-            } else if (ch == '\x1b') { // ESC
-                type = VK_ESC;
-            } else if (ch == ' ') {
-                type = VK_SPACE;
-            }
-
-            // Make action keys wider to fit text while keeping the last column aligned
-            uint8_t width = (type == VK_BACKSPACE || type == VK_ENTER || type == VK_SPACE) ? (KEY_WIDTH * 3) : KEY_WIDTH;
-            keyboard[row][col] = {ch, type, (uint8_t)(col * KEY_WIDTH), (uint8_t)(row * KEY_HEIGHT), width, KEY_HEIGHT};
+    for (int row = 0; row < KEYBOARD_ROWS; row++) {
+        for (int col = 0; col < KEYBOARD_COLS; col++) {
+            const KeyDef &def = LAYOUT[row][col];
+            keyboard[row][col] = {def.label, def.alt, def.type};
         }
     }
 }
@@ -83,7 +178,7 @@ void VirtualKeyboard::draw(OLEDDisplay *display, int16_t offsetX, int16_t offset
 
     // Determine last-column label max width
     display->setFont(FONT_SMALL);
-    const int wENTER = display->getStringWidth("ENTER");
+    const int wENTER = utf8StringWidth(display, "ENTER");
     int lastColLabelW = wENTER; // ENTER is usually the widest
     // Smaller padding on very small screens to avoid excessive whitespace
     const int lastColPad = (screenW <= 128 ? 2 : 6);
@@ -172,7 +267,7 @@ void VirtualKeyboard::draw(OLEDDisplay *display, int16_t offsetX, int16_t offset
     for (int row = 0; row < KEYBOARD_ROWS; row++) {
         for (int col = 0; col < KEYBOARD_COLS; col++) {
             const VirtualKey &k = keyboard[row][col];
-            if (k.character != 0 || k.type != VK_CHAR) {
+            if (k.label != nullptr || k.type != VK_CHAR) {
                 const bool isLastCol = (col == KEYBOARD_COLS - 1);
                 int x = colX[col];
                 int w = colW[col];
@@ -256,7 +351,7 @@ void VirtualKeyboard::drawInputArea(OLEDDisplay *display, int16_t offsetX, int16
             while (!remaining.empty()) {
                 int bestLen = 0;
                 for (int len = 1; len <= (int)remaining.size(); ++len) {
-                    int w = display->getStringWidth(remaining.substr(0, len).c_str());
+                    int w = utf8StringWidth(display, remaining.substr(0, len).c_str());
                     if (w <= maxTextWidth)
                         bestLen = len;
                     else
@@ -301,7 +396,7 @@ void VirtualKeyboard::drawInputArea(OLEDDisplay *display, int16_t offsetX, int16
         for (int i = 0; i < linesToShow; ++i) {
             const std::string &chunk = lines[startIndex + i];
             display->drawString(textX, lineY, chunk.c_str());
-            caretX = textX + display->getStringWidth(chunk.c_str());
+            caretX = textX + utf8StringWidth(display, chunk.c_str());
             caretY = lineY;
             lineY += lineStep;
         }
@@ -328,27 +423,27 @@ void VirtualKeyboard::drawInputArea(OLEDDisplay *display, int16_t offsetX, int16
         }
     } else {
         std::string displayText = inputText;
-        int textW = display->getStringWidth(displayText.c_str());
+        int textW = utf8StringWidth(display, displayText.c_str());
         std::string scrolled = displayText;
         if (textW > maxTextWidth) {
             // Trim from the left until it fits
             while (textW > maxTextWidth && !scrolled.empty()) {
                 scrolled.erase(0, 1);
-                textW = display->getStringWidth(scrolled.c_str());
+                textW = utf8StringWidth(display, scrolled.c_str());
             }
             // Add leading ellipsis and ensure it still fits
             if (scrolled != displayText) {
                 scrolled = "..." + scrolled;
-                textW = display->getStringWidth(scrolled.c_str());
+                textW = utf8StringWidth(display, scrolled.c_str());
                 // If adding ellipsis causes overflow, trim more after the ellipsis
                 while (textW > maxTextWidth && scrolled.size() > 3) {
                     scrolled.erase(3, 1); // remove chars after the ellipsis
-                    textW = display->getStringWidth(scrolled.c_str());
+                    textW = utf8StringWidth(display, scrolled.c_str());
                 }
             }
         } else {
             // Keep textW in sync with what we draw
-            textW = display->getStringWidth(scrolled.c_str());
+            textW = utf8StringWidth(display, scrolled.c_str());
         }
 
         int textY;
@@ -424,19 +519,19 @@ void VirtualKeyboard::drawKey(OLEDDisplay *display, const VirtualKey &key, bool 
                   : (key.type == VK_SPACE)   ? "SPACE"
                   : (key.type == VK_ESC)     ? "ESC"
                                              : "";
-    } else {
-        char c = getCharForKey(key, false);
-        if (c >= 'a' && c <= 'z') {
-            c = c - 'a' + 'A';
-        }
-        keyText = (key.character == ' ' || key.character == '_') ? "_" : std::string(1, c);
+    } else if (key.label && strcmp(key.label, "?") == 0) {
         // Show the common "/" pairing next to "?" like on a real keyboard
-        if (key.type == VK_CHAR && key.character == '?') {
-            keyText = "?/";
-        }
+        keyText = "?/";
+    } else if (key.altLabel && currentLayout != KB_LAYOUT_UA) {
+        // Keycaps show the long-press alternate (typically uppercase), like a real keyboard.
+        // Skipped for Ukrainian: this compact font's uppercase Cyrillic glyphs are wider than
+        // their advance, so they overflow the narrow key cells (e.g. "Й", "Ї").
+        keyText = key.altLabel;
+    } else {
+        keyText = key.label ? key.label : "";
     }
 
-    int textWidth = display->getStringWidth(keyText.c_str());
+    int textWidth = utf8StringWidth(display, keyText.c_str());
     // Label alignment
     // - Rightmost action column: right-align text with a small right padding (~2px) so it hugs screen edge neatly.
     // - Other keys: center horizontally; use ceil-style rounding to avoid appearing left-biased on odd widths.
@@ -512,24 +607,22 @@ void VirtualKeyboard::drawKey(OLEDDisplay *display, const VirtualKey &key, bool 
     display->drawString(textX, centeredTextY, keyText.c_str());
 }
 
-char VirtualKeyboard::getCharForKey(const VirtualKey &key, bool isLongPress)
+const char *VirtualKeyboard::getLabelForKey(const VirtualKey &key, bool isLongPress)
 {
     if (key.type != VK_CHAR) {
-        return key.character;
+        return nullptr;
     }
-
-    char c = key.character;
-
-    // Long-press: letters become uppercase; for "?" provide "/" like a typical keyboard
-    if (isLongPress) {
-        if (c >= 'a' && c <= 'z') {
-            c = (char)(c - 'a' + 'A');
-        } else if (c == '?') {
-            c = '/';
-        }
+    if (isLongPress && key.altLabel) {
+        return key.altLabel;
     }
+    return key.label;
+}
 
-    return c;
+void VirtualKeyboard::switchLayout()
+{
+    currentLayout = (currentLayout == KB_LAYOUT_EN) ? KB_LAYOUT_UA : KB_LAYOUT_EN;
+    initializeKeyboard();
+    resetTimeout();
 }
 
 void VirtualKeyboard::moveCursorDelta(int dRow, int dCol)
@@ -598,13 +691,13 @@ void VirtualKeyboard::handlePress()
     const VirtualKey &key = keyboard[cursorRow][cursorCol];
 
     // Don't handle press if the key is empty (but allow special keys)
-    if (key.character == 0 && key.type == VK_CHAR) {
+    if (key.type == VK_CHAR && !key.label) {
         return;
     }
 
-    // For character keys, insert lowercase character
+    // For character keys, insert the base (lowercase/normal) text
     if (key.type == VK_CHAR) {
-        insertCharacter(getCharForKey(key, false)); // false = lowercase/normal char
+        insertText(key.label);
         return;
     }
 
@@ -617,7 +710,7 @@ void VirtualKeyboard::handlePress()
         submitText();
         break;
     case VK_SPACE:
-        insertCharacter(' ');
+        insertText(" ");
         break;
     case VK_ESC:
         if (onTextEntered) {
@@ -639,13 +732,13 @@ void VirtualKeyboard::handleLongPress()
     const VirtualKey &key = keyboard[cursorRow][cursorCol];
 
     // Don't handle press if the key is empty (but allow special keys)
-    if (key.character == 0 && key.type == VK_CHAR) {
+    if (key.type == VK_CHAR && !key.label) {
         return;
     }
 
-    // For character keys, insert uppercase/alternate character
+    // For character keys, insert the uppercase/alternate text (falls back to base text)
     if (key.type == VK_CHAR) {
-        insertCharacter(getCharForKey(key, true)); // true = uppercase/alternate char
+        insertText(key.altLabel ? key.altLabel : key.label);
         return;
     }
 
@@ -662,7 +755,7 @@ void VirtualKeyboard::handleLongPress()
         submitText();
         break;
     case VK_SPACE:
-        insertCharacter(' ');
+        insertText(" ");
         break;
     case VK_ESC:
         if (onTextEntered) {
@@ -674,10 +767,13 @@ void VirtualKeyboard::handleLongPress()
     }
 }
 
-void VirtualKeyboard::insertCharacter(char c)
+void VirtualKeyboard::insertText(const char *text)
 {
+    if (!text) {
+        return;
+    }
     if (inputText.length() < 160) { // Reasonable text length limit
-        inputText += c;
+        inputText += text;
     }
 }
 

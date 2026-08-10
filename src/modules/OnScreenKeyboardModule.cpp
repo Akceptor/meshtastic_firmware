@@ -110,6 +110,9 @@ bool OnScreenKeyboardModule::processVirtualKeyboardInput(const InputEvent &event
     case INPUT_BROKER_SELECT_LONG:
         targetKeyboard->handleLongPress();
         return true;
+    case INPUT_BROKER_ALT_LONG:
+        targetKeyboard->switchLayout();
+        return true;
     default:
         return false;
     }
