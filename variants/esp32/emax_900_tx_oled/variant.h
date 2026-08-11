@@ -20,6 +20,9 @@
 
 // Fan
 #define RF95_FAN_EN 32
+// Fan only needs to run at higher power levels; keep it off below this requested EIRP (dBm) to
+// cut noise at normal operating power. Pin is on/off only (no PWM), so this is a hard cutoff.
+#define RF95_FAN_ON_THRESHOLD_DBM 26
 
 // NeoPixel (GRB, 1 LED)
 #define HAS_NEOPIXEL

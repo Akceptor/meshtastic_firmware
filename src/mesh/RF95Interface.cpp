@@ -22,6 +22,11 @@
 // if you set power to something higher than 17 or 20 you might fry your board.
 
 #if defined(RADIOMASTER_900_BANDIT_NANO) || defined(RADIOMASTER_900_BANDIT) || defined(EMAX_900_TX_OLED)
+// Boards without their own RF95_FAN_ON_THRESHOLD_DBM keep the old "always on unless disabled" behavior.
+#ifndef RF95_FAN_ON_THRESHOLD_DBM
+#define RF95_FAN_ON_THRESHOLD_DBM 0
+#endif
+
 // Structure to hold DAC and DB values
 typedef struct {
     uint8_t dac;
@@ -99,6 +104,16 @@ DACDB getDACandDB(uint8_t dbm)
 
     return defaultValue;
 }
+
+#ifdef RF95_FAN_EN
+// Keep the PA fan off unless it's actually disabled by config AND we're above the noise-worthy
+// power threshold. Called on init and on every reconfigure (tx_power change, admin config push).
+static void updateFanState(int8_t requestedPowerDbm)
+{
+    bool fanOn = !config.lora.pa_fan_disabled && requestedPowerDbm >= RF95_FAN_ON_THRESHOLD_DBM;
+    digitalWrite(RF95_FAN_EN, fanOn ? 1 : 0);
+}
+#endif
 #endif
 
 RF95Interface::RF95Interface(LockingArduinoHal *hal, RADIOLIB_PIN_TYPE cs, RADIOLIB_PIN_TYPE irq, RADIOLIB_PIN_TYPE rst,
@@ -183,7 +198,11 @@ bool RF95Interface::init()
 
 #ifdef RF95_FAN_EN
     pinMode(RF95_FAN_EN, OUTPUT);
+#if defined(RADIOMASTER_900_BANDIT_NANO) || defined(RADIOMASTER_900_BANDIT) || defined(EMAX_900_TX_OLED)
+    updateFanState(requestedPower);
+#else
     digitalWrite(RF95_FAN_EN, 1);
+#endif
 #endif
 
 #ifdef RF95_RXEN
@@ -291,6 +310,9 @@ bool RF95Interface::reconfigure()
                  dacDbValues.dac);
         dacWrite(RF95_PA_EN, dacDbValues.dac);
         power = dacDbValues.db;
+#ifdef RF95_FAN_EN
+        updateFanState(requestedPower);
+#endif
     }
 #endif
 

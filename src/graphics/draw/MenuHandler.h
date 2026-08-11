@@ -41,6 +41,7 @@ class menuHandler
         NumberTest,
         WifiToggleMenu,
         BluetoothToggleMenu,
+        FanToggleMenu,
         ScreenOptionsMenu,
         PowerMenu,
         SystemBaseMenu,
@@ -106,6 +107,7 @@ class menuHandler
     static void numberTest();
     static void wifiBaseMenu();
     static void wifiToggleMenu();
+    static void fanToggleMenu();
     static void screenOptionsMenu();
     static void powerMenu();
     static void nodeNameLengthMenu();

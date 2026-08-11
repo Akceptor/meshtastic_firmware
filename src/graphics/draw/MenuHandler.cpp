@@ -1083,7 +1083,7 @@ void menuHandler::textMessageBaseMenu()
 
 void menuHandler::systemBaseMenu()
 {
-    enum optionsNumbers { Back, Notifications, ScreenOptions, Bluetooth, WiFiToggle, PowerMenu, Test, enumEnd };
+    enum optionsNumbers { Back, Notifications, ScreenOptions, Bluetooth, WiFiToggle, FanToggle, PowerMenu, Test, enumEnd };
     static const char *optionsArray[enumEnd] = {"Back"};
     static int optionsEnumArray[enumEnd] = {Back};
     int options = 1;
@@ -1103,6 +1103,10 @@ void menuHandler::systemBaseMenu()
 #if HAS_WIFI && !defined(ARCH_PORTDUINO)
     optionsArray[options] = "WiFi Toggle";
     optionsEnumArray[options++] = WiFiToggle;
+#endif
+#ifdef RF95_FAN_EN
+    optionsArray[options] = "Fan Toggle";
+    optionsEnumArray[options++] = FanToggle;
 #endif
 
     if (currentResolution == ScreenResolution::UltraLow) {
@@ -1144,6 +1148,11 @@ void menuHandler::systemBaseMenu()
 #if HAS_WIFI && !defined(ARCH_PORTDUINO)
         } else if (selected == WiFiToggle) {
             menuQueue = WifiToggleMenu;
+            screen->runNow();
+#endif
+#ifdef RF95_FAN_EN
+        } else if (selected == FanToggle) {
+            menuQueue = FanToggleMenu;
             screen->runNow();
 #endif
         } else if (selected == Back && !test_enabled) {
@@ -2354,6 +2363,30 @@ void menuHandler::wifiToggleMenu()
     screen->showOverlayBanner(bannerOptions);
 }
 
+#ifdef RF95_FAN_EN
+void menuHandler::fanToggleMenu()
+{
+    enum optionsNumbers { Back, Fan_disable, Fan_enable };
+
+    static const char *optionsArray[] = {"Back", "Fan Disabled", "Fan Enabled"};
+    BannerOverlayOptions bannerOptions;
+    bannerOptions.message = "PA Fan";
+    bannerOptions.optionsArrayPtr = optionsArray;
+    bannerOptions.optionsCount = 3;
+    bannerOptions.InitialSelected = config.lora.pa_fan_disabled ? Fan_disable : Fan_enable;
+    bannerOptions.bannerCallback = [](int selected) -> void {
+        if (selected == Fan_disable) {
+            config.lora.pa_fan_disabled = true;
+            service->reloadConfig(SEGMENT_CONFIG);
+        } else if (selected == Fan_enable) {
+            config.lora.pa_fan_disabled = false;
+            service->reloadConfig(SEGMENT_CONFIG);
+        }
+    };
+    screen->showOverlayBanner(bannerOptions);
+}
+#endif
+
 void menuHandler::screenOptionsMenu()
 {
     // Check if brightness is supported
@@ -2847,6 +2880,11 @@ void menuHandler::handleMenuSwitch(OLEDDisplay *display)
     case WifiToggleMenu:
         wifiToggleMenu();
         break;
+#ifdef RF95_FAN_EN
+    case FanToggleMenu:
+        fanToggleMenu();
+        break;
+#endif
     case KeyVerificationInit:
         keyVerificationInitMenu();
         break;
