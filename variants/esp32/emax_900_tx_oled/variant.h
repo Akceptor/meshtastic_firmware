@@ -9,6 +9,11 @@
 #undef GPS_RX_PIN
 #undef GPS_TX_PIN
 
+// JR-bay signal pin to the handset (single wire, half duplex) — same pin ExpressLRS uses for its
+// CRSF link ("serial_rx"/"serial_tx" in the ELRS target JSON). Lets the stock ExpressLRS Lua
+// script on the handset identify this module (see CrsfHandsetModule).
+#define CRSF_UART_PIN 13
+
 // SX1276 SPI
 #define LORA_DIO0 4
 #define LORA_DIO1 RADIOLIB_NC  // not connected on EMAX OLED
