@@ -28,3 +28,14 @@ class CrsfHandsetModule : private concurrency::OSThread
     uint8_t rxLen = 0;
     uint8_t rxExpected = 0;
 };
+
+// Live counters for the System > CRSF Status menu — lets us confirm the link is alive without a USB
+// serial monitor (which can't be attached at the same time as the JR-bay connector).
+struct CrsfHandsetStats {
+    uint32_t bytesRx = 0;
+    uint32_t framesRx = 0;
+    uint32_t badCrc = 0;
+    uint32_t pingsRx = 0;
+    uint32_t infoSent = 0;
+};
+extern CrsfHandsetStats crsfHandsetStats;

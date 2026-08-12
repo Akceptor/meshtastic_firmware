@@ -42,6 +42,7 @@ class menuHandler
         WifiToggleMenu,
         BluetoothToggleMenu,
         FanToggleMenu,
+        CrsfStatusMenu,
         ScreenOptionsMenu,
         PowerMenu,
         SystemBaseMenu,
@@ -108,6 +109,7 @@ class menuHandler
     static void wifiBaseMenu();
     static void wifiToggleMenu();
     static void fanToggleMenu();
+    static void crsfStatusMenu();
     static void screenOptionsMenu();
     static void powerMenu();
     static void nodeNameLengthMenu();

@@ -14,6 +14,9 @@
 #ifdef RF95_FAN_EN
 #include "FanControl.h"
 #endif
+#ifdef CRSF_UART_PIN
+#include "modules/CrsfHandsetModule.h"
+#endif
 #include "buzz.h"
 #include "graphics/Screen.h"
 #include "graphics/SharedUIDisplay.h"
@@ -1086,7 +1089,7 @@ void menuHandler::textMessageBaseMenu()
 
 void menuHandler::systemBaseMenu()
 {
-    enum optionsNumbers { Back, Notifications, ScreenOptions, Bluetooth, WiFiToggle, FanToggle, PowerMenu, Test, enumEnd };
+    enum optionsNumbers { Back, Notifications, ScreenOptions, Bluetooth, WiFiToggle, FanToggle, CrsfStatus, PowerMenu, Test, enumEnd };
     static const char *optionsArray[enumEnd] = {"Back"};
     static int optionsEnumArray[enumEnd] = {Back};
     int options = 1;
@@ -1110,6 +1113,10 @@ void menuHandler::systemBaseMenu()
 #ifdef RF95_FAN_EN
     optionsArray[options] = "Fan Toggle";
     optionsEnumArray[options++] = FanToggle;
+#endif
+#ifdef CRSF_UART_PIN
+    optionsArray[options] = "CRSF Status";
+    optionsEnumArray[options++] = CrsfStatus;
 #endif
 
     if (currentResolution == ScreenResolution::UltraLow) {
@@ -1156,6 +1163,11 @@ void menuHandler::systemBaseMenu()
 #ifdef RF95_FAN_EN
         } else if (selected == FanToggle) {
             menuQueue = FanToggleMenu;
+            screen->runNow();
+#endif
+#ifdef CRSF_UART_PIN
+        } else if (selected == CrsfStatus) {
+            menuQueue = CrsfStatusMenu;
             screen->runNow();
 #endif
         } else if (selected == Back && !test_enabled) {
@@ -2404,6 +2416,26 @@ void menuHandler::fanToggleMenu()
 }
 #endif
 
+#ifdef CRSF_UART_PIN
+void menuHandler::crsfStatusMenu()
+{
+    // Snapshot taken now, each time the menu is opened — lets us watch the counters climb while
+    // plugged into the JR bay with the ExpressLRS Lua script running, no USB serial needed.
+    static char message[96];
+    snprintf(message, sizeof(message), "CRSF Status\nRX bytes: %lu\nFrames: %lu  BadCRC: %lu\nPings: %lu  Sent: %lu",
+             (unsigned long)crsfHandsetStats.bytesRx, (unsigned long)crsfHandsetStats.framesRx,
+             (unsigned long)crsfHandsetStats.badCrc, (unsigned long)crsfHandsetStats.pingsRx,
+             (unsigned long)crsfHandsetStats.infoSent);
+
+    static const char *optionsArray[] = {"Back"};
+    BannerOverlayOptions bannerOptions;
+    bannerOptions.message = message;
+    bannerOptions.optionsArrayPtr = optionsArray;
+    bannerOptions.optionsCount = 1;
+    screen->showOverlayBanner(bannerOptions);
+}
+#endif
+
 void menuHandler::screenOptionsMenu()
 {
     // Check if brightness is supported
@@ -2900,6 +2932,11 @@ void menuHandler::handleMenuSwitch(OLEDDisplay *display)
 #ifdef RF95_FAN_EN
     case FanToggleMenu:
         fanToggleMenu();
+        break;
+#endif
+#ifdef CRSF_UART_PIN
+    case CrsfStatusMenu:
+        crsfStatusMenu();
         break;
 #endif
     case KeyVerificationInit:

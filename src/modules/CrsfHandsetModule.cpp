@@ -40,12 +40,15 @@ uint32_t packSoftwareVersion(const char *versionStr)
 }
 } // namespace
 
+CrsfHandsetStats crsfHandsetStats;
+
 CrsfHandsetModule::CrsfHandsetModule() : concurrency::OSThread("CrsfHandset")
 {
     crsfPort.begin(CRSF_BAUD, SERIAL_8N1, CRSF_UART_PIN, CRSF_UART_PIN, false);
     // Single-wire half duplex: the JR-bay signal pin is shared for RX and TX. The UART hardware
     // handles the direction switching so we don't have to bit-bang pinMode around every send.
     uart_set_mode(CRSF_UART_NUM, UART_MODE_RS485_HALF_DUPLEX);
+    LOG_INFO("CrsfHandset: listening on GPIO%d @ %u baud", CRSF_UART_PIN, CRSF_BAUD);
 }
 
 void CrsfHandsetModule::sendDeviceInfo(uint8_t destAddr)
@@ -80,6 +83,7 @@ void CrsfHandsetModule::sendDeviceInfo(uint8_t destAddr)
     i++;
 
     crsfPort.write(buf, i);
+    crsfHandsetStats.infoSent++;
 }
 
 void CrsfHandsetModule::handleFrame(const uint8_t *frame, uint8_t len)
@@ -87,14 +91,23 @@ void CrsfHandsetModule::handleFrame(const uint8_t *frame, uint8_t len)
     // frame = [sync, len, type, dest, orig, ...payload..., crc]
     const uint8_t type = frame[2];
     const uint8_t crc = crsfCrc8(&frame[2], len - 3);
-    if (crc != frame[len - 1])
+    if (crc != frame[len - 1]) {
+        crsfHandsetStats.badCrc++;
+        LOG_DEBUG("CrsfHandset: bad CRC on type=0x%02x len=%d (got 0x%02x want 0x%02x)", type, len, frame[len - 1], crc);
         return;
+    }
+
+    crsfHandsetStats.framesRx++;
+    LOG_DEBUG("CrsfHandset: frame type=0x%02x dest=0x%02x orig=0x%02x", type, frame[3], frame[4]);
 
     if (type == CRSF_FRAMETYPE_DEVICE_PING) {
+        crsfHandsetStats.pingsRx++;
         const uint8_t destAddr = frame[3];
         const uint8_t origAddr = frame[4];
-        if (destAddr == CRSF_ADDRESS_BROADCAST || destAddr == CRSF_ADDRESS_CRSF_TRANSMITTER)
+        if (destAddr == CRSF_ADDRESS_BROADCAST || destAddr == CRSF_ADDRESS_CRSF_TRANSMITTER) {
+            LOG_INFO("CrsfHandset: got Device Ping, replying with Device Info");
             sendDeviceInfo(origAddr);
+        }
     }
 }
 
@@ -102,9 +115,12 @@ int32_t CrsfHandsetModule::runOnce()
 {
     while (crsfPort.available()) {
         const uint8_t b = crsfPort.read();
+        crsfHandsetStats.bytesRx++;
         switch (rxState) {
         case RxState::WaitSync:
-            if (b == CRSF_SYNC_BYTE) {
+            // Frames from the handset to an external module are addressed to us (0xEE), not the
+            // flight-controller sync byte (0xC8) — see ExpressLRS CRSFHandset::alignBufferToSync().
+            if (b == CRSF_SYNC_BYTE || b == CRSF_ADDRESS_CRSF_TRANSMITTER) {
                 rxBuf[0] = b;
                 rxLen = 1;
                 rxState = RxState::WaitLen;
