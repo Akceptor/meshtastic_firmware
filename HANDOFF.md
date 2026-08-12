@@ -5,6 +5,63 @@ Base: upstream meshtastic/firmware @ same branch
 
 ---
 
+## OPEN: CRSF Lua handset identification — not working on hardware
+
+`CrsfHandsetModule` (`src/modules/CrsfHandsetModule.{h,cpp}`, `CRSF_UART_PIN 13` in
+`variant.h`) was added so the stock ExpressLRS Lua script on an EdgeTX handset can see
+"Meshtastic <version>" when this TX module is plugged into the JR bay. **It does not work
+yet** — on real hardware the link never receives a single byte.
+
+**Diagnostic in place:** System > CRSF Status menu (commit `d043c102f`) shows live counters
+(RX bytes / frames / bad CRC / pings / replies sent) — check it live from the device menu
+while plugged into the bay, since USB can't be attached at the same time as the bay
+connector.
+
+**Confirmed so far:**
+- Module constructs and starts fine — boot log shows
+  `CrsfHandset: listening on GPIO13 @ 400000 baud`.
+- EdgeTX external RF module slot confirmed set to protocol "Crossfire" (so the radio should
+  be driving CRSF onto the bay pin).
+- With module plugged into the bay and Lua script running: **all counters read 0** — no
+  bytes at all reach the UART. Not a parsing/protocol bug, something upstream of that.
+- Fixed (real bug, keep): sync-byte check only accepted `0xC8`. Per ExpressLRS's own
+  `CRSFHandset::alignBufferToSync()` (`ExpressLRS/src/lib/Handset/CRSFHandset.cpp:222`),
+  frames addressed to an external module also legitimately start with `0xEE`
+  (`CRSF_ADDRESS_CRSF_TRANSMITTER`). Now accepts both. Did not fix the all-zero symptom by
+  itself, but is a genuine correctness fix worth keeping regardless.
+- **Tried and reverted:** replaced `uart_set_mode(UART_MODE_RS485_HALF_DUPLEX)` with manual
+  GPIO direction switching (tri-state via `gpio_set_direction()` between RX/TX), mirroring
+  ExpressLRS's own `CRSFHandset::duplex_set_RX()/duplex_set_TX()` (classic ESP32 has no
+  DE/RE pin, so their driver never trusts `UART_MODE_RS485_HALF_DUPLEX` alone — see
+  `ExpressLRS/src/lib/Handset/CRSFHandset.cpp:364-410`). Theory: our TX driver stays
+  permanently enabled and fights the handset's own driver on the shared wire. **Made things
+  worse — device hung at the boot splash and never got past the Meshtastic logo while
+  plugged into the bay.** Reverted back to `uart_set_mode(RS485_HALF_DUPLEX)` in commit
+  `d043c102f`. Root cause of *that* regression was never isolated (didn't get to test
+  whether it also hung standalone over USB, only tested plugged into the bay).
+
+**Also observed, unexplained:** at one point (still on the `uart_set_mode` build, before the
+GPIO revert), exiting the ExpressLRS Lua script caused the TX module itself to reboot. Not
+re-confirmed since; worth checking again once the link is working, since it may point to a
+brownout from electrical contention on the shared pin — consistent with the driver-fighting
+theory above, just not yet proven.
+
+**Next steps, not yet tried:**
+- Multimeter/scope on GPIO13 (or the bay connector's data pin) while the handset is powered
+  with Crossfire selected, to confirm the handset is actually driving *something* on that
+  wire electrically, independent of firmware. If it's flat, the fault is wiring/connector,
+  not code.
+- Continuity check: GPIO13 pad on the ESP32 to the JR-bay connector's signal pin, to rule
+  out a bad trace/solder joint on this specific board.
+- If electrical contention is confirmed as the real cause, the fix is still the manual
+  direction-switching approach — but the boot hang needs debugging first (add the debug
+  build without plugging into the bay, confirm standalone-over-USB boot is clean, then
+  retest plugged in).
+- Not yet considered: baud/level mismatch (5V vs 3.3V logic) between the handset's bay
+  output and the ESP32 pad.
+
+---
+
 ## TL;DR
 
 **EMAX 900 OLED TX port works.** It builds, boots, drives the OLED and menus, receives and
