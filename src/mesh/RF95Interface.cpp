@@ -5,6 +5,7 @@
 #include "RadioLibRF95.h"
 #include "configuration.h"
 #include "error.h"
+#include "FanControl.h"
 
 #if ARCH_PORTDUINO
 #include "PortduinoGlue.h"
@@ -106,11 +107,25 @@ DACDB getDACandDB(uint8_t dbm)
 }
 
 #ifdef RF95_FAN_EN
-// Keep the PA fan off unless it's actually disabled by config AND we're above the noise-worthy
-// power threshold. Called on init and on every reconfigure (tx_power change, admin config push).
+FanMode fanMode = FanMode::Auto;
+
+// Auto: fan follows the noise-worthy power threshold. ForceOn/ForceOff (set from the on-device
+// menu) override that. Called on init and on every reconfigure (tx_power change, admin config
+// push, or a menu-driven reloadConfig with no actual config change).
 static void updateFanState(int8_t requestedPowerDbm)
 {
-    bool fanOn = !config.lora.pa_fan_disabled && requestedPowerDbm >= RF95_FAN_ON_THRESHOLD_DBM;
+    bool fanOn;
+    switch (fanMode) {
+    case FanMode::ForceOn:
+        fanOn = true;
+        break;
+    case FanMode::ForceOff:
+        fanOn = false;
+        break;
+    default:
+        fanOn = requestedPowerDbm >= RF95_FAN_ON_THRESHOLD_DBM;
+        break;
+    }
     digitalWrite(RF95_FAN_EN, fanOn ? 1 : 0);
 }
 #endif

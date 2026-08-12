@@ -11,6 +11,9 @@
 #include "MeshService.h"
 #include "MessageStore.h"
 #include "NodeDB.h"
+#ifdef RF95_FAN_EN
+#include "FanControl.h"
+#endif
 #include "buzz.h"
 #include "graphics/Screen.h"
 #include "graphics/SharedUIDisplay.h"
@@ -2366,22 +2369,36 @@ void menuHandler::wifiToggleMenu()
 #ifdef RF95_FAN_EN
 void menuHandler::fanToggleMenu()
 {
-    enum optionsNumbers { Back, Fan_disable, Fan_enable };
+    enum optionsNumbers { Back, Fan_auto, Fan_forceOn, Fan_forceOff };
 
-    static const char *optionsArray[] = {"Back", "Fan Disabled", "Fan Enabled"};
+    static const char *optionsArray[] = {"Back", "Fan: Auto", "Fan: Force On", "Fan: Force Off"};
     BannerOverlayOptions bannerOptions;
     bannerOptions.message = "PA Fan";
     bannerOptions.optionsArrayPtr = optionsArray;
-    bannerOptions.optionsCount = 3;
-    bannerOptions.InitialSelected = config.lora.pa_fan_disabled ? Fan_disable : Fan_enable;
+    bannerOptions.optionsCount = 4;
+    switch (fanMode) {
+    case FanMode::ForceOn:
+        bannerOptions.InitialSelected = Fan_forceOn;
+        break;
+    case FanMode::ForceOff:
+        bannerOptions.InitialSelected = Fan_forceOff;
+        break;
+    default:
+        bannerOptions.InitialSelected = Fan_auto;
+        break;
+    }
     bannerOptions.bannerCallback = [](int selected) -> void {
-        if (selected == Fan_disable) {
-            config.lora.pa_fan_disabled = true;
-            service->reloadConfig(SEGMENT_CONFIG);
-        } else if (selected == Fan_enable) {
-            config.lora.pa_fan_disabled = false;
-            service->reloadConfig(SEGMENT_CONFIG);
-        }
+        if (selected == Fan_auto)
+            fanMode = FanMode::Auto;
+        else if (selected == Fan_forceOn)
+            fanMode = FanMode::ForceOn;
+        else if (selected == Fan_forceOff)
+            fanMode = FanMode::ForceOff;
+        else
+            return;
+        // Nothing about the lora config actually changed; this just re-triggers reconfigure()
+        // so RF95Interface re-evaluates the fan pin against the new mode immediately.
+        service->reloadConfig(SEGMENT_CONFIG);
     };
     screen->showOverlayBanner(bannerOptions);
 }

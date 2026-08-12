@@ -793,7 +793,7 @@ void AdminModule::handleSetConfig(const meshtastic_Config &c)
         }
 #endif
 
-#ifdef RF95_FAN_EN
+#if defined(RF95_FAN_EN) && !(defined(RADIOMASTER_900_BANDIT_NANO) || defined(RADIOMASTER_900_BANDIT) || defined(EMAX_900_TX_OLED))
         // Turn PA off if disabled by config
         if (c.payload_variant.lora.pa_fan_disabled) {
             digitalWrite(RF95_FAN_EN, LOW ^ 0);
