@@ -4,14 +4,14 @@ Binaries built from this branch. The suffix records any non-default build flags.
 
 ## Contents
 
-### 2.7.26.9632e01 (current)
+### 2.7.26.d8cd6e7 (current)
 
 | File | Board | Notes |
 |---|---|---|
-| `firmware-emax_900_tx_oled-2.7.26.9632e01-sync0x12.factory.bin` | Emax 900 OLED TX | Full image incl. bootloader + partitions. Flash to offset `0x0`. |
-| `firmware-emax_900_tx_oled-2.7.26.9632e01-sync0x12.ota.bin` | Emax 900 OLED TX | App only. For OTA, or serial flash to offset `0x10000`. |
-| `firmware-emax_900_tx_oled-2.7.26.9632e01-sync0x2b.factory.bin` | Emax 900 OLED TX | Full image, stock Meshtastic sync word. Flash to offset `0x0`. |
-| `firmware-emax_900_tx_oled-2.7.26.9632e01-sync0x2b.ota.bin` | Emax 900 OLED TX | App only, stock sync word. For OTA, or serial flash to offset `0x10000`. |
+| `firmware-emax_900_tx_oled-2.7.26.d8cd6e7-sync0x12.factory.bin` | Emax 900 OLED TX | Full image incl. bootloader + partitions. Flash to offset `0x0`. |
+| `firmware-emax_900_tx_oled-2.7.26.d8cd6e7-sync0x12.ota.bin` | Emax 900 OLED TX | App only. For OTA, or serial flash to offset `0x10000`. |
+| `firmware-emax_900_tx_oled-2.7.26.d8cd6e7-sync0x2b.factory.bin` | Emax 900 OLED TX | Full image, stock Meshtastic sync word. Flash to offset `0x0`. |
+| `firmware-emax_900_tx_oled-2.7.26.d8cd6e7-sync0x2b.ota.bin` | Emax 900 OLED TX | App only, stock sync word. For OTA, or serial flash to offset `0x10000`. |
 
 Built with:
 
@@ -48,14 +48,14 @@ Factory image (erases config):
 
 ```
 esptool.py --chip esp32 --port /dev/cu.usbserial-0001 --baud 460800 \
-  write_flash 0x0 firmware-emax_900_tx_oled-2.7.26.6451195-sync0x12.factory.bin
+  write_flash 0x0 firmware-emax_900_tx_oled-2.7.26.d8cd6e7-sync0x12.factory.bin
 ```
 
 App only (keeps config):
 
 ```
 esptool.py --chip esp32 --port /dev/cu.usbserial-0001 --baud 460800 \
-  write_flash 0x10000 firmware-emax_900_tx_oled-2.7.26.6451195-sync0x12.ota.bin
+  write_flash 0x10000 firmware-emax_900_tx_oled-2.7.26.d8cd6e7-sync0x12.ota.bin
 ```
 
 ## PA calibration
