@@ -89,7 +89,7 @@ class RadioLibInterface : public RadioInterface, protected concurrency::Notified
 #ifndef MESHTASTIC_LORA_SYNCWORD
 #define MESHTASTIC_LORA_SYNCWORD 0x2b
 #endif
-    const uint8_t syncWord = MESHTASTIC_LORA_SYNCWORD;
+    uint8_t syncWord = MESHTASTIC_LORA_SYNCWORD;
 
     float currentLimit = 100; // 100mA OCP - Should be acceptable for RFM95/SX127x chipset.
 

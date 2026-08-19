@@ -6,6 +6,7 @@
 #include "configuration.h"
 #include "error.h"
 #include "FanControl.h"
+#include "SyncWordOverride.h"
 
 #if ARCH_PORTDUINO
 #include "PortduinoGlue.h"
@@ -165,6 +166,11 @@ bool RF95Interface::init()
 {
     RadioLibInterface::init();
 
+#ifdef EMAX_900_TX_OLED
+    loadEmaxSyncWord();
+    syncWord = emaxSyncWord;
+#endif
+
 #if defined(RADIOMASTER_900_BANDIT_NANO) || defined(RADIOMASTER_900_BANDIT) || defined(EMAX_900_TX_OLED)
     // Requested EIRP in dBm. tx_power == 0 means "max allowed", not "2 dBm" — `power` is the
     // SX1276 driver level (always 2 on this board), so it must not be used as the fallback.
@@ -281,6 +287,10 @@ bool RF95Interface::reconfigure()
     err = lora->setCodingRate(cr);
     if (err != RADIOLIB_ERR_NONE)
         RECORD_CRITICALERROR(meshtastic_CriticalErrorCode_INVALID_RADIO_SETTING);
+
+#ifdef EMAX_900_TX_OLED
+    syncWord = emaxSyncWord;
+#endif
 
     err = lora->setSyncWord(syncWord);
     if (err != RADIOLIB_ERR_NONE)

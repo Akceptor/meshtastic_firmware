@@ -14,6 +14,9 @@
 #ifdef RF95_FAN_EN
 #include "FanControl.h"
 #endif
+#ifdef EMAX_900_TX_OLED
+#include "SyncWordOverride.h"
+#endif
 #ifdef CRSF_UART_PIN
 #include "modules/CrsfHandsetModule.h"
 #endif
@@ -74,12 +77,31 @@ uint8_t test_count = 0;
 
 void menuHandler::loraMenu()
 {
-    static const char *optionsArray[] = {"Back", "Device Role", "Radio Preset", "Frequency Slot", "LoRa Region", "Output Power"};
-    enum optionsNumbers { Back = 0, DeviceRolePicker = 1, RadioPresetPicker = 2, FrequencySlot = 3, LoraPicker = 4, TxPower = 5 };
+    enum optionsNumbers { Back, DeviceRolePicker, RadioPresetPicker, FrequencySlot, LoraPicker, SyncWord, TxPower, enumEnd };
+    static const char *optionsArray[enumEnd] = {"Back"};
+    static int optionsEnumArray[enumEnd] = {Back};
+    int options = 1;
+
+    optionsArray[options] = "Device Role";
+    optionsEnumArray[options++] = DeviceRolePicker;
+    optionsArray[options] = "Radio Preset";
+    optionsEnumArray[options++] = RadioPresetPicker;
+    optionsArray[options] = "Frequency Slot";
+    optionsEnumArray[options++] = FrequencySlot;
+    optionsArray[options] = "LoRa Region";
+    optionsEnumArray[options++] = LoraPicker;
+#ifdef EMAX_900_TX_OLED
+    optionsArray[options] = "Sync Word";
+    optionsEnumArray[options++] = SyncWord;
+#endif
+    optionsArray[options] = "Output Power";
+    optionsEnumArray[options++] = TxPower;
+
     BannerOverlayOptions bannerOptions;
     bannerOptions.message = "LoRa Actions";
     bannerOptions.optionsArrayPtr = optionsArray;
-    bannerOptions.optionsCount = 6;
+    bannerOptions.optionsEnumPtr = optionsEnumArray;
+    bannerOptions.optionsCount = options;
     bannerOptions.bannerCallback = [](int selected) -> void {
         if (selected == Back) {
             // No action
@@ -91,6 +113,10 @@ void menuHandler::loraMenu()
             menuHandler::menuQueue = menuHandler::FrequencySlot;
         } else if (selected == LoraPicker) {
             menuHandler::menuQueue = menuHandler::LoraPicker;
+#ifdef EMAX_900_TX_OLED
+        } else if (selected == SyncWord) {
+            menuHandler::menuQueue = menuHandler::SyncWordMenu;
+#endif
         } else if (selected == TxPower) {
             menuHandler::menuQueue = menuHandler::TxPowerPicker;
         }
@@ -2416,6 +2442,32 @@ void menuHandler::fanToggleMenu()
 }
 #endif
 
+#ifdef EMAX_900_TX_OLED
+void menuHandler::syncWordMenu()
+{
+    enum optionsNumbers { Back, Standard, Compat };
+
+    static const char *optionsArray[] = {"Back", "Standard (0x2b)", "LR11xx compat (0x12)"};
+    BannerOverlayOptions bannerOptions;
+    bannerOptions.message = "LoRa Sync Word";
+    bannerOptions.optionsArrayPtr = optionsArray;
+    bannerOptions.optionsCount = 3;
+    bannerOptions.InitialSelected = (emaxSyncWord == 0x12) ? Compat : Standard;
+    bannerOptions.bannerCallback = [](int selected) -> void {
+        if (selected == Standard)
+            saveEmaxSyncWord(0x2b);
+        else if (selected == Compat)
+            saveEmaxSyncWord(0x12);
+        else
+            return;
+        // Nothing about the lora config actually changed; this just re-triggers reconfigure()
+        // so RF95Interface re-applies the new sync word to the radio immediately.
+        service->reloadConfig(SEGMENT_CONFIG);
+    };
+    screen->showOverlayBanner(bannerOptions);
+}
+#endif
+
 #ifdef CRSF_UART_PIN
 void menuHandler::crsfStatusMenu()
 {
@@ -2840,6 +2892,11 @@ void menuHandler::handleMenuSwitch(OLEDDisplay *display)
     case TxPowerPicker:
         txPowerPicker();
         break;
+#ifdef EMAX_900_TX_OLED
+    case SyncWordMenu:
+        syncWordMenu();
+        break;
+#endif
     case NoTimeoutLoraPicker:
         LoraRegionPicker(0);
         break;

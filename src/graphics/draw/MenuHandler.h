@@ -59,6 +59,7 @@ class menuHandler
         DisplayUnits,
         MessageBubblesMenu,
         TxPowerPicker,
+        SyncWordMenu,
         ChangeSlotMenu
     };
     static screenMenus menuQueue;
@@ -118,6 +119,7 @@ class menuHandler
     static void messageBubblesMenu();
     static void textMessageMenu();
     static void txPowerPicker();
+    static void syncWordMenu();
     static void changeSlotMenu();
 
   private:
