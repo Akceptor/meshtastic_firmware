@@ -1,0 +1,8 @@
+# TLORA_V2_1_16 dual-OTA partition table (4MB flash)
+# Two equal 1.875MB app slots (ota_0/ota_1), shared LittleFS 320KB
+# Name,   Type, SubType,  Offset,   Size,     Flags
+nvs,      data, nvs,      0x009000, 0x005000,
+otadata,  data, ota,      0x00e000, 0x002000,
+ota_0,    app,  ota_0,    0x010000, 0x1E0000,
+ota_1,    app,  ota_1,    0x1F0000, 0x1E0000,
+spiffs,   data, spiffs,   0x3D0000, 0x030000,
