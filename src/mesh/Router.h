@@ -23,6 +23,10 @@ class Router : protected concurrency::OSThread, protected PacketHistory
   protected:
     std::unique_ptr<RadioInterface> iface = nullptr;
 
+    /// Optional second radio interface (BAYCKRC dual-band simulcast). Every outgoing packet sent via
+    /// `iface` is mirrored here too; incoming packets from either radio feed the same receive path.
+    std::unique_ptr<RadioInterface> iface2 = nullptr;
+
   public:
     /**
      * Constructor
@@ -34,6 +38,12 @@ class Router : protected concurrency::OSThread, protected PacketHistory
      * Currently we only allow one interface, that may change in the future
      */
     void addInterface(std::unique_ptr<RadioInterface> _iface) { iface = std::move(_iface); }
+
+    /// Second radio interface for simulcast boards (BAYCKRC dual-band). Optional.
+    void addSecondInterface(std::unique_ptr<RadioInterface> _iface2) { iface2 = std::move(_iface2); }
+
+    /// Currently active radio interface, or nullptr if none was successfully added.
+    RadioInterface *getRadioIface() { return iface.get(); }
 
     /**
      * do idle processing

@@ -59,6 +59,7 @@ class RadioLibInterface : public RadioInterface, protected concurrency::Notified
      * Raw ISR handler that just calls our polymorphic method
      */
     static void isrTxLevel0(), isrLevel0Common(PendingISR code);
+    static void isrTxLevel0Secondary(), isrLevel0CommonSecondary(PendingISR code);
 
     MeshPacketQueue txQueue = MeshPacketQueue(MAX_TX_QUEUE);
 
@@ -107,6 +108,10 @@ class RadioLibInterface : public RadioInterface, protected concurrency::Notified
     /// are _trying_ to receive a packet currently (note - we might just be waiting for one)
     bool isReceiving = false;
 
+    /// True if this instance is the second radio (BAYCKRC dual-band simulcast); selects the
+    /// `instance2`-based ISR trampolines instead of the primary `instance`-based ones.
+    bool isSecondaryRadio = false;
+
   protected:
     // Noise floor tracking - rolling window of samples.
     static const uint8_t NOISE_FLOOR_SAMPLES = 20;
@@ -131,6 +136,10 @@ class RadioLibInterface : public RadioInterface, protected concurrency::Notified
     /** Our ISR code currently needs this to find our active instance
      */
     static RadioLibInterface *instance;
+
+    /** Second radio instance (BAYCKRC dual-band simulcast use case only). Telemetry/UI code must keep
+     * using `instance` for the primary radio; this slot is only for the mirrored second interface. */
+    static RadioLibInterface *instance2;
 
     /**
      * Get the current calculated noise floor in dBm
@@ -173,7 +182,7 @@ class RadioLibInterface : public RadioInterface, protected concurrency::Notified
 
   public:
     RadioLibInterface(LockingArduinoHal *hal, RADIOLIB_PIN_TYPE cs, RADIOLIB_PIN_TYPE irq, RADIOLIB_PIN_TYPE rst,
-                      RADIOLIB_PIN_TYPE busy, PhysicalLayer *iface = NULL);
+                      RADIOLIB_PIN_TYPE busy, PhysicalLayer *iface = NULL, bool isSecondary = false);
 
     virtual ErrorCode send(meshtastic_MeshPacket *p) override;
 
@@ -290,6 +299,7 @@ class RadioLibInterface : public RadioInterface, protected concurrency::Notified
      * Raw ISR handler that just calls our polymorphic method
      */
     static void isrRxLevel0();
+    static void isrRxLevel0Secondary();
 
     /**
      * If a send was in progress finish it and return the buffer to the pool */

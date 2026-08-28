@@ -8,6 +8,9 @@
 #include "PowerFSM.h"
 #include "PowerMon.h"
 #include "RadioLibInterface.h"
+#ifdef BAYCKRC_DUAL_BAND
+#include "mesh/LR1120Interface.h"
+#endif
 #include "ReliableRouter.h"
 #include "TransmitHistory.h"
 #include "airtime.h"
@@ -988,6 +991,25 @@ void setup()
 
     auto rIf = initLoRa();
 
+#ifdef BAYCKRC_DUAL_BAND
+    // Second LR1120, locked to a fixed frequency, shares the SPI bus with the primary radio via the
+    // same RadioLibHAL. Fail-closed: if this radio doesn't come up, don't run with only the primary
+    // either (see the fail-closed check further below where both interfaces are added to the router).
+    std::unique_ptr<RadioInterface> rIf2;
+    if (rIf) {
+        rIf2 = std::unique_ptr<LR1120Interface>(new LR1120Interface((LockingArduinoHal *)RadioLibHAL, LORA_CS_2, LR1120_IRQ_PIN_2,
+                                                                     LR1120_NRESET_PIN_2, LR1120_BUSY_PIN_2, /*isSecondary=*/true,
+                                                                     BAYCKRC_SECOND_RADIO_FREQ_MHZ));
+        if (!rIf2->init()) {
+            LOG_WARN("BAYCKRC: second radio init failed, disabling both radios (fail-closed)");
+            rIf = nullptr;
+            rIf2 = nullptr;
+        } else {
+            LOG_INFO("BAYCKRC: second radio (433.125MHz) init success");
+        }
+    }
+#endif
+
     lateInitVariant(); // Do board specific init (see extra_variants/README.md for documentation)
 
 #if !MESHTASTIC_EXCLUDE_MQTT
@@ -1042,6 +1064,10 @@ void setup()
                                                        1000);
 
         router->addInterface(std::move(rIf));
+#ifdef BAYCKRC_DUAL_BAND
+        if (rIf2)
+            router->addSecondInterface(std::move(rIf2));
+#endif
     }
 
     // This must be _after_ service.init because we need our preferences loaded from flash to have proper timeout values
@@ -1170,6 +1196,20 @@ void loop()
         if (!Throttle::isWithinTimespanMs(lastAgcReset, AGC_RESET_INTERVAL_MS)) {
             lastAgcReset = millis();
             RadioLibInterface::instance->resetAGC();
+        }
+    }
+
+    if (RadioLibInterface::instance2 != nullptr) {
+        static uint32_t lastRadioMissedIrqPoll2;
+        if (!Throttle::isWithinTimespanMs(lastRadioMissedIrqPoll2, 1000)) {
+            lastRadioMissedIrqPoll2 = millis();
+            RadioLibInterface::instance2->pollMissedIrqs();
+        }
+
+        static uint32_t lastAgcReset2;
+        if (!Throttle::isWithinTimespanMs(lastAgcReset2, AGC_RESET_INTERVAL_MS)) {
+            lastAgcReset2 = millis();
+            RadioLibInterface::instance2->resetAGC();
         }
     }
 

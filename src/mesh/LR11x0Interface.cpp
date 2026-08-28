@@ -38,8 +38,8 @@ static const Module::RfSwitchMode_t rfswitch_table[] = {
 
 template <typename T>
 LR11x0Interface<T>::LR11x0Interface(LockingArduinoHal *hal, RADIOLIB_PIN_TYPE cs, RADIOLIB_PIN_TYPE irq, RADIOLIB_PIN_TYPE rst,
-                                    RADIOLIB_PIN_TYPE busy)
-    : RadioLibInterface(hal, cs, irq, rst, busy, &lora), lora(&module)
+                                    RADIOLIB_PIN_TYPE busy, bool isSecondary, float fixedFreqOverride_)
+    : RadioLibInterface(hal, cs, irq, rst, busy, &lora, isSecondary), lora(&module), fixedFreqOverride(fixedFreqOverride_)
 {
     LOG_WARN("LR11x0Interface(cs=%d, irq=%d, rst=%d, busy=%d)", cs, irq, rst, busy);
 }
@@ -109,10 +109,12 @@ template <typename T> bool LR11x0Interface<T>::init()
         return false;
 
     LR11x0VersionInfo_t version;
-    res = lora.getVersionInfo(&version);
-    if (res == RADIOLIB_ERR_NONE)
+    int16_t verRes = lora.getVersionInfo(&version);
+    if (verRes == RADIOLIB_ERR_NONE)
         LOG_DEBUG("LR11x0 Device %d, HW %d, FW %d.%d, WiFi %d.%d, GNSS %d.%d", version.device, version.hardware, version.fwMajor,
                   version.fwMinor, version.fwMajorWiFi, version.fwMinorWiFi, version.fwGNSS, version.almanacGNSS);
+    else
+        LOG_WARN("LR11x0 getVersionInfo failed (%d), continuing", verRes);
 
     LOG_INFO("Frequency set to %f", getFreq());
     LOG_INFO("Bandwidth set to %f", bw);
@@ -262,7 +264,7 @@ template <typename T> void LR11x0Interface<T>::startReceive()
     RadioLibInterface::startReceive();
 
     // Must be done AFTER, starting transmit, because startTransmit clears (possibly stale) interrupt pending register bits
-    enableInterrupt(isrRxLevel0);
+    enableInterrupt(isSecondaryRadio ? isrRxLevel0Secondary : isrRxLevel0);
     checkRxDoneIrqFlag();
 #endif
 }

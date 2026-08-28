@@ -10,7 +10,7 @@ template <class T> class LR11x0Interface : public RadioLibInterface
 {
   public:
     LR11x0Interface(LockingArduinoHal *hal, RADIOLIB_PIN_TYPE cs, RADIOLIB_PIN_TYPE irq, RADIOLIB_PIN_TYPE rst,
-                    RADIOLIB_PIN_TYPE busy);
+                    RADIOLIB_PIN_TYPE busy, bool isSecondary = false, float fixedFreqOverride = 0);
 
     /// Initialise the Driver transport hardware and software.
     /// Make sure the Driver is properly configured before calling init().
@@ -38,6 +38,12 @@ template <class T> class LR11x0Interface : public RadioLibInterface
     T lora;
 
     int16_t getCurrentRSSI() override;
+
+    /// Fixed frequency override (MHz), used for a locked second radio (BAYCKRC dual-band simulcast).
+    /// 0 means "no override, use the normal region/config-derived frequency".
+    float fixedFreqOverride = 0;
+
+    [[nodiscard]] float getFreq() override { return fixedFreqOverride > 0 ? fixedFreqOverride : RadioInterface::getFreq(); }
 
     /**
      * Glue functions called from ISR land

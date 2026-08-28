@@ -284,6 +284,10 @@ ErrorCode Router::sendLocal(meshtastic_MeshPacket *p, RxSource src)
 ErrorCode Router::rawSend(meshtastic_MeshPacket *p)
 {
     assert(iface); // This should have been detected already in sendLocal (or we just received a packet from outside)
+    if (iface2) {
+        meshtastic_MeshPacket *p2 = packetPool.allocCopy(*p);
+        iface2->send(p2);
+    }
     return iface->send(p);
 }
 
@@ -392,6 +396,10 @@ ErrorCode Router::send(meshtastic_MeshPacket *p)
 #endif
 
     assert(iface); // This should have been detected already in sendLocal (or we just received a packet from outside)
+    if (iface2) {
+        meshtastic_MeshPacket *p2 = packetPool.allocCopy(*p);
+        iface2->send(p2);
+    }
     return iface->send(p);
 }
 

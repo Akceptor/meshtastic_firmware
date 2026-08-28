@@ -38,10 +38,13 @@ void LockingArduinoHal::spiTransfer(uint8_t *out, size_t len, uint8_t *in)
 #endif
 
 RadioLibInterface::RadioLibInterface(LockingArduinoHal *hal, RADIOLIB_PIN_TYPE cs, RADIOLIB_PIN_TYPE irq, RADIOLIB_PIN_TYPE rst,
-                                     RADIOLIB_PIN_TYPE busy, PhysicalLayer *_iface)
-    : NotifiedWorkerThread("RadioIf"), module(hal, cs, irq, rst, busy), iface(_iface)
+                                     RADIOLIB_PIN_TYPE busy, PhysicalLayer *_iface, bool isSecondary)
+    : NotifiedWorkerThread("RadioIf"), module(hal, cs, irq, rst, busy), iface(_iface), isSecondaryRadio(isSecondary)
 {
-    instance = this;
+    if (isSecondaryRadio)
+        instance2 = this;
+    else
+        instance = this;
 
     // Initialize unused sample slots to a sane default; sample count controls averaging.
     for (uint8_t i = 0; i < NOISE_FLOOR_SAMPLES; i++) {
@@ -84,9 +87,30 @@ void INTERRUPT_ATTR RadioLibInterface::isrTxLevel0()
     isrLevel0Common(ISR_TX);
 }
 
+void INTERRUPT_ATTR RadioLibInterface::isrLevel0CommonSecondary(PendingISR cause)
+{
+    instance2->disableInterrupt();
+
+    BaseType_t xHigherPriorityTaskWoken;
+    instance2->notifyFromISR(&xHigherPriorityTaskWoken, cause, true);
+
+    YIELD_FROM_ISR(xHigherPriorityTaskWoken);
+}
+
+void INTERRUPT_ATTR RadioLibInterface::isrRxLevel0Secondary()
+{
+    isrLevel0CommonSecondary(ISR_RX);
+}
+
+void INTERRUPT_ATTR RadioLibInterface::isrTxLevel0Secondary()
+{
+    isrLevel0CommonSecondary(ISR_TX);
+}
+
 /** Our ISR code currently needs this to find our active instance
  */
 RadioLibInterface *RadioLibInterface::instance;
+RadioLibInterface *RadioLibInterface::instance2;
 
 /** Could we send right now (i.e. either not actively receiving or transmitting)? */
 bool RadioLibInterface::canSendImmediately()
@@ -690,7 +714,7 @@ bool RadioLibInterface::startSend(meshtastic_MeshPacket *txp)
         } else {
             // Must be done AFTER, starting transmit, because startTransmit clears (possibly stale) interrupt pending register
             // bits
-            enableInterrupt(isrTxLevel0);
+            enableInterrupt(isSecondaryRadio ? isrTxLevel0Secondary : isrTxLevel0);
             lastTxStart = millis();
             printPacket("Started Tx", txp);
 #ifdef LED_LORA
