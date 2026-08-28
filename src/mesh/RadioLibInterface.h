@@ -246,7 +246,7 @@ class RadioLibInterface : public RadioInterface, protected concurrency::Notified
      * Request randomness sourced from the LoRa modem, if supported by the active RadioLib interface.
      * @return true if len bytes were produced, false otherwise.
      */
-    bool randomBytes(uint8_t *buffer, size_t length);
+    virtual bool randomBytes(uint8_t *buffer, size_t length);
 
   private:
     uint8_t getNoiseFloorSampleCountInternal() const;

@@ -5,6 +5,50 @@ Base: upstream meshtastic/firmware @ same branch
 
 ---
 
+## OPEN: unified_esp32c3_lr1121_rx crashes generating PKI keys on first region set
+
+Setting a region for the first time (fresh flash) triggers `CryptoEngine::generateKeyPair()`
+(first-time PKI key generation). On this board it hard-faults, so the region setting is lost
+on the reboot that follows — looks like "region doesn't save" from the app side, but it's a
+crash, not a persistence bug.
+
+**Two separate faults found chasing this, in order:**
+
+1. `mixWithLoRaEntropy()` (`src/mesh/HardwareRNG.cpp`) calls `radio->randomBytes()`, which for
+   LR11x0 goes through RadioLib's `LR11x0::randomByte()` → `Module::SPIcommand` →
+   `Module::SPItransferStream` → **Load access fault**. This is a real, LR11x0-family-wide
+   risk (not board-specific — `bayckrc_dual_band` shares the same code path and just hadn't
+   hit it yet, since PKI generation only fires once, on first real region set). **Fixed**:
+   `LR11x0Interface::randomBytes()` now overrides the base and always returns `false`,
+   skipping modem-sourced entropy for this whole radio family. ESP32's own
+   `esp_fill_random()` already covers the primary entropy source — this is a defensive
+   removal of a broken "nice to have" mixing step, not a loss of real security.
+
+2. With that fixed, region-set now crashes **deeper**, inside `CryptoEngine::generateKeyPair()`
+   itself (`src/mesh/CryptoEngine.cpp:26`) — `Guru Meditation Error: Instruction access fault`,
+   `MEPC: 0x00000000` (jumped to a null address), `RA` still inside `generateKeyPair`. Not
+   root-caused. Two live theories, neither confirmed:
+   - A stack overflow during Curve25519's math (large temp buffers) corrupting the return
+     address — this runs on the `Router` OSThread (`concurrency::OSThread`), which uses the
+     framework's default stack size; unconfirmed whether that's adequately sized on
+     ESP32-C3 vs classic ESP32.
+   - The vendored `Crypto` library (rweather/Crypto, used for `CryptRNG`/`Curve25519`) hitting
+     an untested RISC-V/ESP32-C3 code path. Unconfirmed whether any other ESP32-C3 board in
+     this repo (e.g. `heltec_esp32c3`) has ever actually exercised first-time PKI key
+     generation on real hardware — if it crashes there too, this is a repo-wide ESP32-C3 bug,
+     not specific to this board.
+
+**Next steps, not yet tried:**
+- Test with an increased `Router` thread stack size to check the stack-overflow theory
+  directly (cheap, testable on hardware).
+- If a HELTEC_HT62 (or any other ESP32-C3 board) unit is available, do a fresh-flash region
+  set on it and see if it crashes identically — settles board-specific vs architecture-wide.
+- If it's confirmed to be the Crypto library itself, check for an upstream fix/issue against
+  rweather/Crypto for RISC-V, or consider swapping the PKI keygen path to a
+  known-RISC-V-clean implementation.
+
+---
+
 ## OPEN: CRSF Lua handset identification — not working on hardware
 
 `CrsfHandsetModule` (`src/modules/CrsfHandsetModule.{h,cpp}`, `CRSF_UART_PIN 13` in
@@ -164,6 +208,33 @@ runtime/app config, since the phone app's protocol has no concept of a second ra
 - Confirmed on hardware: TX on both bands, RX on both bands (received-on-433,
   retransmitted-on-868 confirmed with two bench units).
 
+### 3. Unified ESP32-C3 LR1121 RX (`unified_esp32c3_lr1121_rx`)
+
+**Hardware:** ESP32-C3 (single-core RISC-V) + single LR1121 (dual-band sub-GHz + 2.4GHz) +
+NeoPixel + user button, no display. An ExpressLRS unified RX target repurposed as a
+Meshtastic node — single radio, no dual-radio simulcast (unlike bayckrc_dual_band).
+**HW model ID:** 146 (custom, this branch's own numbering — see BAYCKRC/EMAX notes on why
+these aren't registered in `mesh.pb.h`/`architecture.h` on this branch)
+
+| Function | GPIO |
+|---|---|
+| LR1121 SCK / MISO / MOSI / NSS | 6 / 5 / 4 / 7 |
+| LR1121 RESET / BUSY / IRQ | 2 / 3 / 1 |
+| NeoPixel | 8 |
+| User button | 9 |
+| FC-facing UART (not wired into Meshtastic) | RX 20 / TX 21 |
+
+**Status:** Radio initializes, TX/RX works (unconfirmed dedicated bench test like BAYCKRC's,
+but same LR11x0Interface code path). **Blocked:** first-time PKI key generation crashes —
+see the OPEN section at the top of this doc. Region selection is effectively unusable until
+that's resolved, since setting a region always triggers key generation on a fresh device.
+
+**Unconfirmed assumptions carried over from BAYCKRC's LR1120 config, not independently
+verified against this board's schematic:**
+- RF switch via DIO5/DIO6 (`rfswitch.h`) — first thing to check if RX proves flaky.
+- No TCXO (`LR11X0_DIO3_TCXO_VOLTAGE` omitted) — the source ELRS layout JSON had no `tcxo`
+  field, so assumed plain crystal.
+
 ---
 
 ## The sync word trap (read this before debugging any SX127x board)
@@ -301,6 +372,29 @@ it — treat as stale/corrupt NVS from repeated flash cycles, not a code bug. **
 resurfaces**, it's worth actually root-causing (not just erase-and-move-on) — the crash is
 in vendored NimBLE code, not ours, so the next step would be bisecting whether it's config
 size, a corrupted particular NVS namespace, or a genuine NimBLE bug independent of NVS state.
+
+### LR11x0Interface: randomBytes() hard-faulted inside RadioLib's SPI code
+Found bringing up `unified_esp32c3_lr1121_rx`, but affects every LR11x0-family board
+(`bayckrc_dual_band` included — it just hadn't hit this path yet). `HardwareRNG`'s
+`mixWithLoRaEntropy()` calls `RadioLibInterface::randomBytes()`, which for LR11x0 goes
+through RadioLib's `LR11x0::randomByte()` → `Module::SPIcommand` → `Module::SPItransferStream`
+→ **Load access fault**, triggered by `CryptoEngine::generateKeyPair()`'s entropy mixing on
+first-time PKI key generation. `randomBytes()` is now `virtual`; `LR11x0Interface` overrides
+it to always return `false`, skipping modem-sourced entropy entirely for this radio family.
+ESP32's `esp_fill_random()` already covers the primary entropy source, so this is a
+defensive removal of a broken supplementary step, not a security regression. See the OPEN
+section at the top of this doc for the second, still-unresolved crash this uncovered.
+
+### main.cpp: `inputBroker` only reached transitively via GPS.h, broke on headless+GPS-excluded boards
+`inputBroker` (declared in `input/InputBroker.h`) was never included directly by
+`main.cpp` — it arrived by accident via `GPS.h`'s `#include "input/RotaryEncoderInterruptImpl1.h"`
+/ `UpDownInterruptImpl1.h`, which only exist in GPS.h's non-excluded branch. Any board
+excluding GPS on a headless (`HAS_SCREEN 0`) variant loses that side-channel and fails to
+build (`'inputBroker' was not declared in this scope`). `bayckrc_dual_band` worked around
+this by excluding `InputBroker` outright (it has no button), which is why it didn't surface
+there. `unified_esp32c3_lr1121_rx` has a real button and needs `InputBroker` enabled, so the
+actual fix landed instead: `main.cpp` now includes `input/InputBroker.h` directly,
+unconditionally.
 
 ---
 

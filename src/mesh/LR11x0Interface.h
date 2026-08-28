@@ -72,6 +72,15 @@ template <class T> class LR11x0Interface : public RadioLibInterface
     virtual void configHardwareForSend() override;
 
     /**
+     * LR11x0's RadioLib random()/randomByte() SPI path hard-faults (Load access fault deep
+     * in Module::SPItransferStream) when called outside the radio's own RX/TX flow — seen
+     * triggered by CryptoEngine::generateKeyPair()'s entropy mixing on first region set.
+     * ESP32's own esp_fill_random() already covers the primary entropy source, so skip modem
+     * mixing entirely for this radio family rather than risk the crash.
+     */
+    virtual bool randomBytes(uint8_t *, size_t) override { return false; }
+
+    /**
      * Add SNR data to received messages
      */
     virtual void addReceiveMetadata(meshtastic_MeshPacket *mp) override;
