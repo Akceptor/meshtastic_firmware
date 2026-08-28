@@ -4,18 +4,31 @@ Binaries built from this branch. The suffix records any non-default build flags.
 
 ## Contents
 
-### 2.7.26.98b5902 (current)
+### 2.7.26.665b728 (current)
+
+Dual-OTA layout (two 1.875MB app slots) for use with an external dual-boot bootloader
+that keeps the original ExpressLRS firmware in the other slot. See "dual-boot" section
+below.
 
 | File | Board | Notes |
 |---|---|---|
-| `firmware-bayckrc_dual_band-2.7.26.98b5902.factory.bin` | BAYCKRC Dual Band TX (gateway) | Full image incl. bootloader + partitions. Flash to offset `0x0`. |
-| `firmware-bayckrc_dual_band-2.7.26.98b5902.ota.bin` | BAYCKRC Dual Band TX (gateway) | App only. For OTA, or serial flash to offset `0x10000`. |
+| `firmware-bayckrc_dual_band-2.7.26.665b728-sync0x12.factory.bin` | BAYCKRC Dual Band TX (gateway) | LR11xx-compatible sync word. Full image incl. bootloader + partitions. Flash to offset `0x0`. |
+| `firmware-bayckrc_dual_band-2.7.26.665b728-sync0x12.ota.bin` | BAYCKRC Dual Band TX (gateway) | LR11xx-compatible sync word. App only. For OTA, or serial flash to offset `0x10000`. |
+| `firmware-bayckrc_dual_band-2.7.26.665b728-sync0x2b.factory.bin` | BAYCKRC Dual Band TX (gateway) | Stock Meshtastic sync word. Full image incl. bootloader + partitions. Flash to offset `0x0`. |
+| `firmware-bayckrc_dual_band-2.7.26.665b728-sync0x2b.ota.bin` | BAYCKRC Dual Band TX (gateway) | Stock Meshtastic sync word. App only. For OTA, or serial flash to offset `0x10000`. |
 
 Built with:
 
 ```
+# sync0x12 (LR11xx-compatible):
+PLATFORMIO_BUILD_FLAGS="-DMESHTASTIC_LORA_SYNCWORD=0x12" pio run -e bayckrc_dual_band
+
+# sync0x2b (stock Meshtastic default):
 pio run -e bayckrc_dual_band
 ```
+
+See "The sync word trap" further down for why `sync0x12` exists — it matters for this
+board mainly if you want it to interoperate with SX127x boards like `emax_900_tx_oled`.
 
 ## BAYCKRC dual-band gateway — what "gateway" means here
 
@@ -26,6 +39,20 @@ incoming packets from either feed the same receive path. There's no phone-app UI
 the 433.125 MHz frequency is a compile-time constant (see
 `variants/esp32/bayckrc_dual_band/variant.h`), not something you can change without
 reflashing.
+
+## BAYCKRC dual-boot with stock ExpressLRS
+
+`board_build.partitions = variants/esp32/bayckrc_dual_band/partitions-dual.csv` splits
+flash into two equal 1.875MB `ota_0`/`ota_1` app slots instead of the default single large
+partition. The intent: keep the board's original ExpressLRS firmware in one slot and this
+Meshtastic build in the other, switched between by an external dual-boot bootloader (not
+part of this repo) — not just an in-place-OTA rollback slot like `emax_900_tx_oled`'s.
+
+To fit, this build trims `MESHTASTIC_EXCLUDE_*` modules more aggressively than
+`emax_900_tx_oled` (no GPS/sensors/audio, plus `INPUTBROKER`/`CANNEDMESSAGES` since this
+board has no display or input hardware) and excludes unused RadioLib radio families
+(`SX127X`/`SX128X`/`LR2021` — this board only uses `LR11X0`). App image is ~1.45MB,
+comfortably under the 1.875MB slot.
 
 ### 2.7.26.ac50086
 
