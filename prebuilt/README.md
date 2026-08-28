@@ -4,7 +4,30 @@ Binaries built from this branch. The suffix records any non-default build flags.
 
 ## Contents
 
-### 2.7.26.ac50086 (current)
+### 2.7.26.98b5902 (current)
+
+| File | Board | Notes |
+|---|---|---|
+| `firmware-bayckrc_dual_band-2.7.26.98b5902.factory.bin` | BAYCKRC Dual Band TX (gateway) | Full image incl. bootloader + partitions. Flash to offset `0x0`. |
+| `firmware-bayckrc_dual_band-2.7.26.98b5902.ota.bin` | BAYCKRC Dual Band TX (gateway) | App only. For OTA, or serial flash to offset `0x10000`. |
+
+Built with:
+
+```
+pio run -e bayckrc_dual_band
+```
+
+## BAYCKRC dual-band gateway — what "gateway" means here
+
+This build runs both onboard LR1120 radios at once: the primary follows your normal
+region/channel config, the second is locked at compile time to **433.125 MHz** and mirrors
+the primary's modem preset/power automatically. Every outgoing packet goes out both radios;
+incoming packets from either feed the same receive path. There's no phone-app UI for this —
+the 433.125 MHz frequency is a compile-time constant (see
+`variants/esp32/bayckrc_dual_band/variant.h`), not something you can change without
+reflashing.
+
+### 2.7.26.ac50086
 
 | File | Board | Notes |
 |---|---|---|
