@@ -1016,7 +1016,9 @@ void setup()
     mqttInit();
 #endif
 
-#if defined(RF95_FAN_EN) && !(defined(RADIOMASTER_900_BANDIT_NANO) || defined(RADIOMASTER_900_BANDIT) || defined(EMAX_900_TX_OLED))
+#if defined(RF95_FAN_EN) &&                                                                                                      \
+    !(defined(RADIOMASTER_900_BANDIT_NANO) || defined(RADIOMASTER_900_BANDIT) || defined(EMAX_900_TX_OLED) ||                    \
+      defined(BAYCKRC_DUAL_BAND))
     // Ability to disable FAN if PIN has been set with RF95_FAN_EN.
     // Make sure LoRa has been started before disabling FAN.
     // (Boards with the threshold/fan-mode system above already set the pin in RF95Interface::init().)

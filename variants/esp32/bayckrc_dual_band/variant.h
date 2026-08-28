@@ -16,8 +16,12 @@
 #define NEOPIXEL_TYPE (NEO_GRB + NEO_KHZ800)
 // ENABLE_AMBIENTLIGHTING intentionally omitted — variant.cpp owns the NeoPixel (blue→green status)
 
-// Fan
-#define FAN_EN_PIN 4
+// Fan — driven by LR11x0Interface's threshold-based auto control (see LR11x0Interface.cpp).
+// Threshold is an unvalidated default (sub-GHz output is capped at 14 dBm by LR1110_MAX_POWER
+// in platformio.ini, so this only kicks in near the top of that range) — worth re-measuring
+// on hardware, same caveat as EMAX's PA table.
+#define RF95_FAN_EN 4
+#define RF95_FAN_ON_THRESHOLD_DBM 10
 
 // LR1120 dual-band radio (device ID 0x02; LR1121=0x03 — confirmed by findChip() failure pattern)
 #define USE_LR1120

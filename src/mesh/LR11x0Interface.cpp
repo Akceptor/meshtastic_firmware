@@ -36,6 +36,21 @@ static const Module::RfSwitchMode_t rfswitch_table[] = {
 #define LR1120_MAX_POWER 13
 #endif
 
+#ifdef RF95_FAN_EN
+// Boards without their own RF95_FAN_ON_THRESHOLD_DBM keep the old "always on" behavior.
+#ifndef RF95_FAN_ON_THRESHOLD_DBM
+#define RF95_FAN_ON_THRESHOLD_DBM 0
+#endif
+
+// Called on init and on every reconfigure (tx_power change, admin config push, region
+// change). No on-device menu override on this board (headless) — always follows the
+// power threshold.
+static void updateFanState(int8_t requestedPowerDbm)
+{
+    digitalWrite(RF95_FAN_EN, requestedPowerDbm >= RF95_FAN_ON_THRESHOLD_DBM ? 1 : 0);
+}
+#endif
+
 template <typename T>
 LR11x0Interface<T>::LR11x0Interface(LockingArduinoHal *hal, RADIOLIB_PIN_TYPE cs, RADIOLIB_PIN_TYPE irq, RADIOLIB_PIN_TYPE rst,
                                     RADIOLIB_PIN_TYPE busy, bool isSecondary, float fixedFreqOverride_)
@@ -120,6 +135,11 @@ template <typename T> bool LR11x0Interface<T>::init()
     LOG_INFO("Bandwidth set to %f", bw);
     LOG_INFO("Power output set to %d", power);
 
+#ifdef RF95_FAN_EN
+    pinMode(RF95_FAN_EN, OUTPUT);
+    updateFanState(power);
+#endif
+
     if (res == RADIOLIB_ERR_NONE)
         res = lora.setCRC(2);
 
@@ -193,6 +213,10 @@ template <typename T> bool LR11x0Interface<T>::reconfigure()
 
     err = lora.setOutputPower(power);
     assert(err == RADIOLIB_ERR_NONE);
+
+#ifdef RF95_FAN_EN
+    updateFanState(power);
+#endif
 
     startReceive(); // restart receiving
 
@@ -348,6 +372,10 @@ template <typename T> bool LR11x0Interface<T>::sleep()
 
 #ifdef LR11X0_POWER_EN
     digitalWrite(LR11X0_POWER_EN, LOW);
+#endif
+
+#ifdef RF95_FAN_EN
+    digitalWrite(RF95_FAN_EN, 0);
 #endif
 
     return true;
