@@ -2,6 +2,10 @@
 #if !MESHTASTIC_EXCLUDE_GPS
 #include "GPS.h"
 #endif
+// Declares `inputBroker`, used below regardless of MESHTASTIC_EXCLUDE_INPUTBROKER. Previously
+// only reached transitively via GPS.h's rotary/updown includes, which vanish when
+// MESHTASTIC_EXCLUDE_GPS is set on a headless (HAS_SCREEN=0) board — breaking the build.
+#include "input/InputBroker.h"
 #include "MeshRadio.h"
 #include "MeshService.h"
 #include "NodeDB.h"
