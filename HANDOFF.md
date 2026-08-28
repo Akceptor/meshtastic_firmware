@@ -126,14 +126,43 @@ fan (GPIO4), no display
 | Backpack serial RX/TX | 18 / 5 (occupied — do not reassign) |
 | Backpack enable / boot | 14 / 23 (occupied — do not reassign) |
 
-Second LR1120 (Gemini variant, **unused** — Meshtastic is single-radio): CS 15,
-RESET 21, BUSY 39, IRQ 34. Documented in variant.h for possible future 433+868 bridge work.
+Second LR1120 (Gemini variant): CS 15, RESET 21, BUSY 39, IRQ 34. Now used — see
+"Dual-radio simulcast" below.
 
 Power notes: `power_control: 0` means direct dBm, no DAC. Sub-GHz range -16..+5 dBm.
 `LR11X0_DIO3_TCXO_VOLTAGE 1.8`, `LR11X0_DIO_AS_RF_SWITCH`, `radio_dcdc: true`.
 
-**Status:** Radio initialises (result=0). LED status implemented in `variant.cpp`.
-**Pending:** confirm LED green on boot; add `lora.setRxGain(14)`; confirm sub-GHz TX/RX.
+**Status:** Working. Both radios initialise, TX and RX confirmed on hardware for both the
+primary band and the second radio's fixed 433.125MHz.
+
+### Dual-radio simulcast (Gemini variant, second LR1120)
+
+The Gemini board actually populates both onboard LR1120s. The second one is locked at
+**compile time** to 433.125MHz (`BAYCKRC_SECOND_RADIO_FREQ_MHZ` in `variant.h`) — no
+runtime/app config, since the phone app's protocol has no concept of a second radio.
+
+- Every outgoing packet is mirrored to both radios (`Router::send()`/`rawSend()` clone
+  the packet via `packetPool.allocCopy()` and send the clone out `iface2` before the
+  original goes out `iface`, since `iface->send()` consumes/frees it).
+- Incoming packets from either radio feed the same receive path; `PacketHistory`'s
+  existing packet-ID+sender dedup collapses a packet heard on both radios for free — no
+  special-case RX code needed.
+- The second radio mirrors whatever modem preset/power the primary computes from
+  `config.lora` automatically (both read the same global config) — only its frequency is
+  overridden. Changing "Long Fast" or TX power in the app applies to both radios with zero
+  extra code.
+- Startup is fail-closed: if the second radio's `init()` fails, neither radio is added to
+  `Router` (matches the existing red-LED failure state in `variant.cpp`).
+- `RadioLibInterface::instance` is a single static pointer read by many unrelated
+  consumers app-wide (telemetry, `HardwareRNG`, `ButtonThread`, `Screen`, `DeviceTelemetry`,
+  etc.) as "the" primary radio. It keeps that exact meaning — only the primary radio sets
+  it. A second static slot, `instance2`, was added instead, with a parallel set of ISR
+  trampolines (`isrRxLevel0Secondary`/`isrTxLevel0Secondary`). RadioLib's own
+  `setIrqAction()` takes a plain no-arg function pointer (no `attachInterruptArg`-style
+  context available at that layer), which is why this is two static slots rather than a
+  generic per-object dispatch — sufficient since only ever two radios are in play here.
+- Confirmed on hardware: TX on both bands, RX on both bands (received-on-433,
+  retransmitted-on-868 confirmed with two bench units).
 
 ---
 
@@ -261,6 +290,18 @@ Board has an LR1120 (device ID 0x02). `findChip()` retried 10x then returned
 could, so the second `pixel.begin()` failed silently. Omitted deliberately;
 `variant.cpp` is the sole NeoPixel controller.
 
+### BAYCKRC: stale/corrupt NVS caused an intermittent BLE crash loop, looked like a receive bug
+During dual-radio bench testing, RX looked flaky/inconsistent ("some messages pass"). Serial
+log showed `__stack_chk_fail` inside `NimbleBluetooth::setup() -> populate_db_from_nvs`,
+hard-rebooting via `panic_abort` — device had **344 recorded reboots**. This is NimBLE GATT
+DB init on the main `loopTask` stack, nothing to do with the radio/Router changes. The
+intermittent reboot (not every boot) was cutting test sessions short mid-flight, which looked
+exactly like unreliable RX. Erasing flash (`pio run -t erase`) and reflashing clean resolved
+it — treat as stale/corrupt NVS from repeated flash cycles, not a code bug. **If this
+resurfaces**, it's worth actually root-causing (not just erase-and-move-on) — the crash is
+in vendored NimBLE code, not ours, so the next step would be bisecting whether it's config
+size, a corrupted particular NVS namespace, or a genuine NimBLE bug independent of NVS state.
+
 ---
 
 ## Other changes
@@ -313,7 +354,12 @@ Region limits cap the top end well below 33.
 | `src/platform/esp32/architecture.h` | `HW_VENDOR` mappings |
 | `src/mesh/LR11x0Interface.cpp` | `getVersionInfo` result in separate `verRes` |
 | `src/mesh/RF95Interface.cpp` | EMAX DAC table, power fallback |
-| `src/mesh/RadioLibInterface.h` | `MESHTASTIC_LORA_SYNCWORD` build override |
+| `src/mesh/RadioLibInterface.h` | `MESHTASTIC_LORA_SYNCWORD` build override; `instance2` + secondary ISR trampolines for dual-radio |
+| `src/mesh/RadioLibInterface.cpp` | Secondary ISR trampolines, `isSecondaryRadio` constructor flag |
+| `src/mesh/LR11x0Interface.h/.cpp` | `getVersionInfo` result in separate `verRes`; `isSecondary`/`fixedFreqOverride` params, `getFreq()` override |
+| `src/mesh/LR1120Interface.h/.cpp` | Threaded `isSecondary`/`fixedFreqOverride` params to base |
+| `src/mesh/Router.h/.cpp` | Optional `iface2` + `addSecondInterface()`; mirrors outgoing packets to both radios |
+| `src/main.cpp` | Constructs second LR1120Interface under `BAYCKRC_DUAL_BAND`, fail-closed startup, polls `instance2` in `loop()` |
 | `src/graphics/draw/MenuHandler.cpp` | TX power menu low steps |
 
 The EMAX build trims unused modules via `MESHTASTIC_EXCLUDE_*` in its `platformio.ini` to
