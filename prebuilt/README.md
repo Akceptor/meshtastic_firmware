@@ -4,7 +4,54 @@ Binaries built from this branch. The suffix records any non-default build flags.
 
 ## Contents
 
-### 2.7.26.665b728 (current)
+### 2.7.26.23bbb0e (current)
+
+| File | Board | Notes |
+|---|---|---|
+| `firmware-unified_esp32c3_lr1121_rx-2.7.26.23bbb0e.factory.bin` | BAYCKRC C3 900/2400 Dual Band Nano RX | Standalone Meshtastic. Full image incl. bootloader + partitions. Flash to offset `0x0`. **Overwrites the ElrsDual bootloader — do not use for dual-boot.** |
+| `firmware-unified_esp32c3_lr1121_rx-2.7.26.23bbb0e.ota.bin` | BAYCKRC C3 900/2400 Dual Band Nano RX | App only. Flash to a slot offset (`0x10000` or `0x1F0000`) to sit alongside ExpressLRS, or use OTA. |
+
+Stock Meshtastic sync word `0x2b` — this board is LR1121, so it talks to stock Meshtastic
+nodes directly and needs no `sync0x12` override.
+
+Built with:
+
+```
+pio run -e unified_esp32c3_lr1121_rx
+```
+
+## ESP32-C3 LR1121 RX — ElrsDual dual-boot
+
+`board_build.partitions = variants/esp32c3/unified_esp32c3_lr1121_rx/partitions-dual.csv`
+matches the layout [ElrsDual](https://github.com/Akceptor/ElrsDual)'s slot-switch bootloader
+expects, which is ExpressLRS's own `min_spiffs` layout: `ota_0` @ `0x10000` and `ota_1` @
+`0x1F0000`, both 1.875MB, LittleFS 128KB @ `0x3D0000`, and the bootloader's power-cycle
+counter sector at `0x3F0000`. **3 rapid power cycles flip slots.**
+
+Keep stock ExpressLRS in one slot and this image in the other:
+
+```
+esptool.py --chip esp32c3 --port /dev/cu.usbserial-0001 --baud 460800 \
+  write_flash 0x1F0000 firmware-unified_esp32c3_lr1121_rx-2.7.26.23bbb0e.ota.bin
+```
+
+The ElrsDual bootloader and partition table must already be on the board — flash only the
+app image, never the `.factory.bin`, or the slot-switch bootloader is lost.
+
+App image is 1.86MB against a 1.875MB slot: **~17KB of headroom.** Any module added to this
+variant will likely need a matching `MESHTASTIC_EXCLUDE_*` to keep fitting.
+
+### The LR1121 transceiver-firmware patch
+
+ExpressLRS flashes Semtech's LR1121 *transceiver* firmware image (type `0xF3`, e.g.
+`0xF30104`) into the radio and never restores the factory image. RadioLib's `findChip()`
+only accepts the factory device byte `0x03`, so stock Meshtastic reports `LR11x0 init
+result -2` (`CHIP_NOT_FOUND`) on every boot on any ex-ExpressLRS LR1121 board — the radio
+never comes up at all. `extra_scripts/lr11x0_accept_trx_firmware.py` patches the downloaded
+RadioLib copy at build time to also accept `0xF3`. Nothing else differs; the command set is
+the same. There is no upstream fix as of RadioLib 7.6.0.
+
+### 2.7.26.665b728
 
 Dual-OTA layout (two 1.875MB app slots) for use with an external dual-boot bootloader
 that keeps the original ExpressLRS firmware in the other slot. See "dual-boot" section
