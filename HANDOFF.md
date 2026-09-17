@@ -5,14 +5,14 @@ Base: upstream meshtastic/firmware @ same branch
 
 ---
 
-## OPEN: unified_esp32c3_lr1121_rx crashes generating PKI keys on first region set
+## FIXED: unified_esp32c3_lr1121_rx crashed generating PKI keys on first region set
 
 Setting a region for the first time (fresh flash) triggers `CryptoEngine::generateKeyPair()`
-(first-time PKI key generation). On this board it hard-faults, so the region setting is lost
-on the reboot that follows — looks like "region doesn't save" from the app side, but it's a
-crash, not a persistence bug.
+(first-time PKI key generation). On this board it hard-faulted, so the region setting was lost
+on the reboot that followed — looked like "region doesn't save" from the app side, but was
+actually a crash, not a persistence bug.
 
-**Two separate faults found chasing this, in order:**
+**Three faults found chasing this, in order:**
 
 1. `mixWithLoRaEntropy()` (`src/mesh/HardwareRNG.cpp`) calls `radio->randomBytes()`, which for
    LR11x0 goes through RadioLib's `LR11x0::randomByte()` → `Module::SPIcommand` →
@@ -24,28 +24,77 @@ crash, not a persistence bug.
    `esp_fill_random()` already covers the primary entropy source — this is a defensive
    removal of a broken "nice to have" mixing step, not a loss of real security.
 
-2. With that fixed, region-set now crashes **deeper**, inside `CryptoEngine::generateKeyPair()`
-   itself (`src/mesh/CryptoEngine.cpp:26`) — `Guru Meditation Error: Instruction access fault`,
-   `MEPC: 0x00000000` (jumped to a null address), `RA` still inside `generateKeyPair`. Not
-   root-caused. Two live theories, neither confirmed:
-   - A stack overflow during Curve25519's math (large temp buffers) corrupting the return
-     address — this runs on the `Router` OSThread (`concurrency::OSThread`), which uses the
-     framework's default stack size; unconfirmed whether that's adequately sized on
-     ESP32-C3 vs classic ESP32.
-   - The vendored `Crypto` library (rweather/Crypto, used for `CryptRNG`/`Curve25519`) hitting
-     an untested RISC-V/ESP32-C3 code path. Unconfirmed whether any other ESP32-C3 board in
-     this repo (e.g. `heltec_esp32c3`) has ever actually exercised first-time PKI key
-     generation on real hardware — if it crashes there too, this is a repo-wide ESP32-C3 bug,
-     not specific to this board.
+2. With that fixed, region-set still crashed, but **not** in Curve25519 math — bisected on
+   hardware with temporary `LOG_ERROR` tracepoints through `generateKeyPair()` →
+   `HardwareRNG::fill()` → `mixWithLoRaEntropy()`. Crash was the virtual call
+   `radio->randomBytes(scratch, toCopy)` itself, before it ever reached the (now-safe)
+   `LR11x0Interface::randomBytes()` body. `Guru Meditation Error: Instruction access fault`,
+   `MEPC: 0x00000000` (jumped to a null address).
+
+   Diagnosed via ELF inspection (`riscv32-esp-elf-nm -C` on the built `.elf`): the
+   heap-allocated `LR1121Interface` object's vtable pointer was corrupted at the time of the
+   call. Its real vtable (`vtable for LR11x0Interface<LR1121>`) lives at `0x3c177190`, but the
+   pointer actually stored in the live object's first word decoded to `0x3c16a794` — 8 bytes
+   into `vtable for MQTT`. Reading the `randomBytes` slot at that (wrong) vtable location
+   returned a null function pointer, hence the jump to `0x0`. Ruled out stack overflow (tested
+   a doubled `CONFIG_ARDUINO_LOOP_STACK_SIZE`, no change) and a generic RISC-V/Curve25519
+   codegen bug (a stock ESP32-C3 fork running plain SX1262 does first-time PKI keygen fine —
+   https://github.com/benb0jangles/seeed-xiao-esp32c3-meshtastic).
+
+3. **Root cause, confirmed and fixed**: this board's LR1121 fails hardware `init()` on
+   *every* boot (see the new OPEN section below — `RADIOLIB_LR11X0_CMD_GET_VERSION` reads
+   back `0xf3`, not the expected `0x03`). `RadioLibInterface`'s constructor
+   (`src/mesh/RadioLibInterface.cpp`) unconditionally sets the static `instance` (or
+   `instance2`) pointer to `this` — before `init()` even runs. When `init()` fails,
+   `RadioInterface.cpp`'s `initHardware()` does `rIf = nullptr;` on the owning `unique_ptr`,
+   destroying the `LR1121Interface` object — but nothing cleared `RadioLibInterface::instance`.
+   That left it dangling on every single boot. The freed heap slot was later reused by an
+   unrelated allocation (something MQTT-related), and the entropy-mixing code's read through
+   the dangling pointer landed on that new object's vtable instead — explaining the "MQTT
+   vtable" address from fault #2 exactly. **Fix**: added `~RadioLibInterface()` in
+   `src/mesh/RadioLibInterface.h` that nulls `instance`/`instance2` when the owning object is
+   destroyed. Confirmed on hardware: region now survives a reboot (`Wanted region 3, using
+   EU_868` persists across power cycles), no more crash.
+
+---
+
+## OPEN: unified_esp32c3_lr1121_rx — LR1121 fails hardware init on every boot
+
+Contrary to this doc's earlier (unverified) claim that "Radio initializes, TX/RX works",
+live testing shows `LR11x0 init result -2` (`RADIOLIB_ERR_CHIP_NOT_FOUND`) on **every single
+boot**, consistently — this board's radio has likely never actually transmitted or received.
+`RadioLibInterface::instance` still gets set (see the FIXED section above for why that used
+to crash PKI keygen), so the app/BLE side looks normal (config, telemetry, etc. all work) —
+but there is no working LoRa radio behind any of it right now.
+
+**Diagnosis so far:** enabled RadioLib's built-in `RADIOLIB_DEBUG_BASIC=1` (temporary build
+flag, since reverted) to see `LR11x0::findChip()`'s per-attempt detail
+(`src/../RadioLib/src/modules/LR11x0/LR11x0.cpp`, `findChip()`/`modSetup()`). Every one of
+its 10 retries (reset + `GET_VERSION`) reads back device byte `0xf3`; expected `0x03`
+(`RADIOLIB_LR11X0_DEVICE_LR1121`). No `BUSY pin timeout after reset!` is ever printed, so
+the RESET→BUSY-low handshake (`LRxxxx::reset()`) completes normally — the chip does exit
+reset. The `0xf3` reply is stable across all 10 retries (not `0xFF`/`0x00`, i.e. not a
+floating/dead bus), so this is a real, repeatable communication result, just the wrong
+device ID.
+
+This must be board/wiring-specific: the exact same `Module`/`LRxxxx` SPI stack
+(`SPItransferStream`/`SPIcommand`) is proven working for `bayckrc_dual_band`'s LR1120 in
+this same repo, so a generic RadioLib protocol bug would show there too. Ruled out as
+software-explainable from here — needs physical hardware verification, which requires
+a logic analyzer/scope on this board, not available in this session:
 
 **Next steps, not yet tried:**
-- Test with an increased `Router` thread stack size to check the stack-overflow theory
-  directly (cheap, testable on hardware).
-- If a HELTEC_HT62 (or any other ESP32-C3 board) unit is available, do a fresh-flash region
-  set on it and see if it crashes identically — settles board-specific vs architecture-wide.
-- If it's confirmed to be the Crypto library itself, check for an upstream fix/issue against
-  rweather/Crypto for RISC-V, or consider swapping the PKI keygen path to a
-  known-RISC-V-clean implementation.
+- Scope/logic-analyze the actual SCK/MOSI/MISO/NSS lines during `findChip()`'s GET_VERSION
+  transaction, compare bit-for-bit against the LR11xx datasheet's expected framing — confirm
+  whether `0xf3` is a genuine chip reply or artifact of an SPI mode/timing mismatch.
+- Verify continuity and pin numbering against the physical board — pin source is `variant.h`'s
+  comment: "ExpressLRS unified target layout (UNIFIED_ESP32C3_LR1121_RX)", not independently
+  confirmed against this specific unit's schematic/silkscreen.
+- Confirm the populated chip is actually an LR1121 (not a different LR11x0-family part or a
+  bad/counterfeit unit) — re-flash RadioLib's own `updateFirmware()`/bootloader-mode check
+  path, or physically inspect the chip marking.
+- Re-enable `RADIOLIB_DEBUG_BASIC=1` in this variant's `platformio.ini` (removed after use —
+  it's noisy on every SPI call, not left on by default) if resuming this investigation.
 
 ---
 
@@ -224,10 +273,11 @@ these aren't registered in `mesh.pb.h`/`architecture.h` on this branch)
 | User button | 9 |
 | FC-facing UART (not wired into Meshtastic) | RX 20 / TX 21 |
 
-**Status:** Radio initializes, TX/RX works (unconfirmed dedicated bench test like BAYCKRC's,
-but same LR11x0Interface code path). **Blocked:** first-time PKI key generation crashes —
-see the OPEN section at the top of this doc. Region selection is effectively unusable until
-that's resolved, since setting a region always triggers key generation on a fresh device.
+**Status:** BLE/app/config/telemetry all work. PKI-keygen-on-region-set crash is now
+**fixed** (see FIXED section near the top). But the LR1121 radio itself fails hardware
+init on every single boot (`LR11x0 init result -2`) — this earlier "Radio initializes,
+TX/RX works" claim was never actually verified and is wrong; see the OPEN section near the
+top for the live evidence and next steps. No LoRa TX/RX has been confirmed on this board.
 
 **Unconfirmed assumptions carried over from BAYCKRC's LR1120 config, not independently
 verified against this board's schematic:**

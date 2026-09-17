@@ -184,6 +184,21 @@ class RadioLibInterface : public RadioInterface, protected concurrency::Notified
     RadioLibInterface(LockingArduinoHal *hal, RADIOLIB_PIN_TYPE cs, RADIOLIB_PIN_TYPE irq, RADIOLIB_PIN_TYPE rst,
                       RADIOLIB_PIN_TYPE busy, PhysicalLayer *iface = NULL, bool isSecondary = false);
 
+    /**
+     * initHardware() destroys the radio object (via unique_ptr reset to nullptr) when the chip fails
+     * hardware init, but the constructor unconditionally points instance/instance2 at `this`. Without
+     * this destructor, a failed-init radio leaves a dangling static pointer that a later, unrelated
+     * heap allocation (e.g. MQTT) can reuse, causing calls like HardwareRNG's entropy mixing to jump
+     * through a stale vtable belonging to whatever object now sits at that address.
+     */
+    virtual ~RadioLibInterface() override
+    {
+        if (instance == this)
+            instance = nullptr;
+        if (instance2 == this)
+            instance2 = nullptr;
+    }
+
     virtual ErrorCode send(meshtastic_MeshPacket *p) override;
 
     /**
