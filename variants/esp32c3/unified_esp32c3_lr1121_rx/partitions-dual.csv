@@ -1,0 +1,16 @@
+# UNIFIED_ESP32C3_LR1121_RX dual-boot partition table (4MB flash)
+# Offsets match ElrsDual's slot-switch bootloader (https://github.com/Akceptor/ElrsDual,
+# bootloader-slot-switch/partitions.csv): one slot holds stock ExpressLRS, the other holds
+# Meshtastic, and 3 rapid power cycles flip between them.
+#
+# The bootloader hook reads/writes its power-cycle counter at a HARDCODED 0x3F0000
+# (SS_CTR_OFFSET in bootloader_components/slot_switch/hook.c) and does not consult this
+# table, so `slotctr` is declared here to keep LittleFS off that sector. Do not grow spiffs
+# past 0x3F0000.
+# Name,   Type, SubType,  Offset,   Size,     Flags
+nvs,      data, nvs,      0x009000, 0x005000,
+otadata,  data, ota,      0x00e000, 0x002000,
+ota_0,    app,  ota_0,    0x010000, 0x1E0000,
+ota_1,    app,  ota_1,    0x1F0000, 0x1E0000,
+spiffs,   data, spiffs,   0x3D0000, 0x020000,
+slotctr,  data, 0x40,     0x3F0000, 0x001000,
