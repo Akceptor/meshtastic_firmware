@@ -4,15 +4,22 @@ Binaries built from this branch. The suffix records any non-default build flags.
 
 ## Contents
 
-### 2.7.26.23bbb0e (current)
+### 2.7.26.9f12caf (current)
 
 | File | Board | Notes |
 |---|---|---|
-| `firmware-unified_esp32c3_lr1121_rx-2.7.26.23bbb0e.factory.bin` | BAYCKRC C3 900/2400 Dual Band Nano RX | Standalone Meshtastic. Full image incl. bootloader + partitions. Flash to offset `0x0`. **Overwrites the ElrsDual bootloader — do not use for dual-boot.** |
-| `firmware-unified_esp32c3_lr1121_rx-2.7.26.23bbb0e.ota.bin` | BAYCKRC C3 900/2400 Dual Band Nano RX | App only. Flash to a slot offset (`0x10000` or `0x1F0000`) to sit alongside ExpressLRS, or use OTA. |
+| `firmware-unified_esp32c3_lr1121_rx-2.7.26.9f12caf.factory.bin` | BAYCKRC C3 900/2400 Dual Band Nano RX | Standalone Meshtastic. Full image incl. bootloader + partitions. Flash to offset `0x0`. **Overwrites the ElrsDual bootloader — do not use for dual-boot.** |
+| `firmware-unified_esp32c3_lr1121_rx-2.7.26.9f12caf.ota.bin` | BAYCKRC C3 900/2400 Dual Band Nano RX | App only. Flash to a slot offset (`0x10000` or `0x1F0000`) to sit alongside ExpressLRS, or use OTA. |
 
 Stock Meshtastic sync word `0x2b` — this board is LR1121, so it talks to stock Meshtastic
 nodes directly and needs no `sync0x12` override.
+
+**TX power: 22 dBm max, and don't set 1-14 dBm from the app.** RadioLib picks the LR1121's
+low-power PA at or below 14 dBm and its high-power PA above, so 14 vs 15 swaps amplifier
+rather than stepping 1 dB — a request in the 1-14 range is roughly 8 dB down and transmits
+very weakly while receive still works normally. Leave `tx_power` unset (defaults to the
+region limit, clamped to 22) or set 22. This matches what ExpressLRS runs on this hardware.
+EU_433's 10 dBm regulatory limit unavoidably forces the LP PA.
 
 Built with:
 
@@ -32,7 +39,7 @@ Keep stock ExpressLRS in one slot and this image in the other:
 
 ```
 esptool.py --chip esp32c3 --port /dev/cu.usbserial-0001 --baud 460800 \
-  write_flash 0x1F0000 firmware-unified_esp32c3_lr1121_rx-2.7.26.23bbb0e.ota.bin
+  write_flash 0x1F0000 firmware-unified_esp32c3_lr1121_rx-2.7.26.9f12caf.ota.bin
 ```
 
 The ElrsDual bootloader and partition table must already be on the board — flash only the
