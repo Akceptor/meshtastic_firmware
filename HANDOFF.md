@@ -41,9 +41,9 @@ actually a crash, not a persistence bug.
    codegen bug (a stock ESP32-C3 fork running plain SX1262 does first-time PKI keygen fine —
    https://github.com/benb0jangles/seeed-xiao-esp32c3-meshtastic).
 
-3. **Root cause, confirmed and fixed**: this board's LR1121 fails hardware `init()` on
-   *every* boot (see the new OPEN section below — `RADIOLIB_LR11X0_CMD_GET_VERSION` reads
-   back `0xf3`, not the expected `0x03`). `RadioLibInterface`'s constructor
+3. **Root cause, confirmed and fixed**: this board's LR1121 failed hardware `init()` on
+   *every* boot (see the FIXED section below — `RADIOLIB_LR11X0_CMD_GET_VERSION` reads back
+   `0xf3`, ExpressLRS's transceiver-firmware type, which RadioLib rejected). `RadioLibInterface`'s constructor
    (`src/mesh/RadioLibInterface.cpp`) unconditionally sets the static `instance` (or
    `instance2`) pointer to `this` — before `init()` even runs. When `init()` fails,
    `RadioInterface.cpp`'s `initHardware()` does `rIf = nullptr;` on the owning `unique_ptr`,
@@ -58,45 +58,52 @@ actually a crash, not a persistence bug.
 
 ---
 
-## OPEN: unified_esp32c3_lr1121_rx — LR1121 fails hardware init on every boot
+## FIXED: unified_esp32c3_lr1121_rx — LR1121 failed hardware init on every boot
 
-Contrary to this doc's earlier (unverified) claim that "Radio initializes, TX/RX works",
-live testing shows `LR11x0 init result -2` (`RADIOLIB_ERR_CHIP_NOT_FOUND`) on **every single
-boot**, consistently — this board's radio has likely never actually transmitted or received.
-`RadioLibInterface::instance` still gets set (see the FIXED section above for why that used
-to crash PKI keygen), so the app/BLE side looks normal (config, telemetry, etc. all work) —
-but there is no working LoRa radio behind any of it right now.
+`LR11x0 init result -2` (`RADIOLIB_ERR_CHIP_NOT_FOUND`) on **every** boot. Root cause:
+**ExpressLRS flashes Semtech's LR1121 *transceiver* firmware image into the radio's internal
+flash, and RadioLib only recognises the factory image.**
 
-**Diagnosis so far:** enabled RadioLib's built-in `RADIOLIB_DEBUG_BASIC=1` (temporary build
-flag, since reverted) to see `LR11x0::findChip()`'s per-attempt detail
-(`src/../RadioLib/src/modules/LR11x0/LR11x0.cpp`, `findChip()`/`modSetup()`). Every one of
-its 10 retries (reset + `GET_VERSION`) reads back device byte `0xf3`; expected `0x03`
-(`RADIOLIB_LR11X0_DEVICE_LR1121`). No `BUSY pin timeout after reset!` is ever printed, so
-the RESET→BUSY-low handshake (`LRxxxx::reset()`) completes normally — the chip does exit
-reset. The `0xf3` reply is stable across all 10 retries (not `0xFF`/`0x00`, i.e. not a
-floating/dead bus), so this is a real, repeatable communication result, just the wrong
-device ID.
+- ExpressLRS ships `lr1121_transceiver_F30104.h` — Semtech's own *"Firmware transceiver
+  version 0xF30104 for LR1121"* — and `LR1121Driver::CheckVersion()`
+  (`ExpressLRS/src/lib/LR1121Driver/LR1121.cpp:71-105`) flashes it unless the chip already
+  reports type `0xF3` **and** version `0x0104`. `#define LR1121_FIRMWARE_TYPE 0xF3` is right
+  at the top of that file. It never restores the factory image.
+- RadioLib's `findChip()` (`modules/LR11x0/LR11x0.cpp`) accepts only device byte `0x03`
+  (`RADIOLIB_LR11X0_DEVICE_LR1121`, the factory image) or `0xDF` (bootloader mode). `0xf3`
+  matches neither, so `begin()` returns `-2` and `initHardware()` destroys the radio object.
 
-This must be board/wiring-specific: the exact same `Module`/`LRxxxx` SPI stack
-(`SPItransferStream`/`SPIcommand`) is proven working for `bayckrc_dual_band`'s LR1120 in
-this same repo, so a generic RadioLib protocol bug would show there too. Ruled out as
-software-explainable from here — needs physical hardware verification, which requires
-a logic analyzer/scope on this board, not available in this session:
+So the chip was always healthy and the SPI bus always worked — the stable `0xf3` across all
+10 retries was a *correct* reply that RadioLib refused. Wiring was never the problem, which
+is why every wiring-level check came back clean. **This affects any ex-ExpressLRS LR1121
+board, not just this one.**
 
-**Next steps, not yet tried:**
-- Scope/logic-analyze the actual SCK/MOSI/MISO/NSS lines during `findChip()`'s GET_VERSION
-  transaction, compare bit-for-bit against the LR11xx datasheet's expected framing — confirm
-  whether `0xf3` is a genuine chip reply or artifact of an SPI mode/timing mismatch.
-- Verify continuity and pin numbering against the physical board — pin source is `variant.h`'s
-  comment: "ExpressLRS unified target layout (UNIFIED_ESP32C3_LR1121_RX)", not independently
-  confirmed against this specific unit's schematic/silkscreen.
-- Confirm the populated chip is actually an LR1121 (not a different LR11x0-family part or a
-  bad/counterfeit unit) — re-flash RadioLib's own `updateFirmware()`/bootloader-mode check
-  path, or physically inspect the chip marking.
-- Re-enable `RADIOLIB_DEBUG_BASIC=1` in this variant's `platformio.ini` (removed after use —
-  it's noisy on every SPI call, not left on by default) if resuming this investigation.
+**Fix**: `extra_scripts/lr11x0_accept_trx_firmware.py` patches the downloaded RadioLib copy
+at build time so `findChip()` also accepts `0xF3` when the expected chip is an LR1121. The
+transceiver image's command set is identical (LR1121 has no WiFi/GNSS anyway, and RadioLib
+already skips those reads for this chip type), so nothing else needs to change. RadioLib is
+consumed as an upstream release zip via `lib_deps`, hence a build-time patch rather than a
+source diff; the script is idempotent and fails loudly if RadioLib ever changes that line.
+No upstream fix as of RadioLib 7.6.0. Confirmed working on hardware.
+
+**Also fixed alongside it**: `rfswitch.h` had RX on DIO5 and TX on DIO6, copied from
+`bayckrc_dual_band`'s LR1120. ExpressLRS's own default for this product
+(`LR1121Driver::SetDioAsRfSwitch()`, `LR1121.cpp:299-308` — the BAYCKRC Nano RX has no
+`radio_rfsw_ctrl` override in `Targets/targets.json`) enables DIO5-8 with **RX on DIO7, TX
+and TX_HP on DIO8, TX_HF on DIO6, and HF-RX on DIO5**. No product in `targets.json` uses the
+old mapping. Note RadioLib has no separate HF-receive mode — it uses `MODE_RX` for both
+bands — so 2.4GHz RX still routes through the sub-GHz DIO7 path and would need a different
+table.
+
+**Dead ends this cost, recorded so nobody repeats them:** MISO pull-up (ExpressLRS calls
+`gpio_pullup_en()` on MISO, we didn't — made no difference), reset-pulse width (RadioLib 10ms
+vs ExpressLRS 1ms — irrelevant), and a planned logic-analyzer session on the SPI lines that
+would have shown a perfectly valid transaction. An earlier "it hangs the board" observation
+during that hunt was also a false alarm: **this board does not auto-restart after an esptool
+flash without a manual reset**, which looks identical to a hang.
 
 ---
+
 
 ## OPEN: CRSF Lua handset identification — not working on hardware
 
@@ -273,17 +280,22 @@ these aren't registered in `mesh.pb.h`/`architecture.h` on this branch)
 | User button | 9 |
 | FC-facing UART (not wired into Meshtastic) | RX 20 / TX 21 |
 
-**Status:** BLE/app/config/telemetry all work. PKI-keygen-on-region-set crash is now
-**fixed** (see FIXED section near the top). But the LR1121 radio itself fails hardware
-init on every single boot (`LR11x0 init result -2`) — this earlier "Radio initializes,
-TX/RX works" claim was never actually verified and is wrong; see the OPEN section near the
-top for the live evidence and next steps. No LoRa TX/RX has been confirmed on this board.
+**Status:** Working. BLE/app/config/telemetry all work, the PKI-keygen-on-region-set crash
+is fixed, and the radio now initialises — it needed the RadioLib transceiver-firmware patch
+plus a corrected RF switch table (both in the FIXED section near the top). Confirmed on
+hardware.
 
-**Unconfirmed assumptions carried over from BAYCKRC's LR1120 config, not independently
-verified against this board's schematic:**
-- RF switch via DIO5/DIO6 (`rfswitch.h`) — first thing to check if RX proves flaky.
+Uses the ElrsDual dual-OTA partition layout
+(`variants/esp32c3/unified_esp32c3_lr1121_rx/partitions-dual.csv`) so it can share the board
+with stock ExpressLRS — see `prebuilt/README.md`. The app image is ~1.86MB against a 1.875MB
+slot, so **~17KB of headroom**: any module added here will likely need a matching
+`MESHTASTIC_EXCLUDE_*`. Also note Meshtastic's own OTA updater writes to the *inactive* OTA
+slot, which in a dual-boot setup is where ExpressLRS lives — an in-app firmware update would
+destroy it.
+
+**Still-unconfirmed assumption carried over from BAYCKRC's LR1120 config:**
 - No TCXO (`LR11X0_DIO3_TCXO_VOLTAGE` omitted) — the source ELRS layout JSON had no `tcxo`
-  field, so assumed plain crystal.
+  field, so assumed plain crystal. Radio works without it, so this is settled in practice.
 
 ---
 
