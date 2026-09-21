@@ -5,6 +5,70 @@ Base: upstream meshtastic/firmware @ same branch
 
 ---
 
+## PLANNED: Ra-01/Ra-01H dual-band bridge — port of bayckrc_dual_band's simulcast pattern
+
+Goal: ESP32-WROOM-32U + Ra-01 (SX1278, 433MHz) + Ra-01H (SX1276, 868MHz), receive on
+either band, retransmit the same packet on both. This is the same shape as
+`bayckrc_dual_band`'s dual-LR1120 simulcast (see below) — one nodeDB/router, two radio
+interfaces, `Router` mirrors every TX and `PacketHistory`'s existing dedup collapses a
+packet heard on both radios for free. Deliberately **not** the two-independent-meshes
+UART-bridge approach (stock `Serial` module in `PROTO` mode) — that re-originates every
+crossing packet as a new local message (fresh `from`/`id`/`hop_limit`), which loses sender
+attribution and has no loop protection across the bridge. The `bayckrc_dual_band` pattern
+avoids all of that because both radios belong to the same `Router`/nodeDB.
+
+**What already exists and can be reused as-is:**
+- `RadioLibInterface::instance2` + secondary ISR trampolines (`RadioLibInterface.h/.cpp`) —
+  generic, not LR11x0-specific. Confirmed by reading the header.
+- `Router::iface2` / `addSecondInterface()` and the TX-mirror clone-and-send in
+  `Router.cpp` (`rawSend()` and `send()`) — generic, chip-agnostic.
+- The `#ifdef BAYCKRC_DUAL_BAND` block in `main.cpp` (~line 998-1080) that constructs the
+  second interface, fails closed if it doesn't init, and calls `addSecondInterface()` — copy
+  this pattern wholesale for the new variant's own `#ifdef`.
+
+**What's missing and is the actual work:**
+- `RF95Interface.h/.cpp` (the SX127x driver) does **not** have the `isSecondary` /
+  `fixedFreqOverride` constructor params that `LR11x0Interface`/`LR1120Interface` got for
+  the bayckrc port. Need to thread those through the same way, plus the constructor's
+  `isSecondary` flag into the base `RadioLibInterface` constructor.
+- New variant dir `variants/esp32/<name>/` with `variant.h` + `platformio.ini`. Pins already
+  worked out in `docs/dual-band-meshtastic-bridge.md` (shared VSPI: SCK18/MISO19/MOSI23;
+  radio A NSS5/RST14/DIO0-26/DIO1-33; radio B NSS4/RST27/DIO0-25/DIO1-32).
+- **No `rfswitch.h` needed** — that mechanism is LR11x0-specific (internal DIO-driven RF
+  switch table). SX127x has no equivalent; RadioLib drives PA_BOOST directly.
+- **No sync-word workaround needed** for this pair specifically — both radios are SX127x,
+  so the LR11xx-can't-hear-SX127x sync-word trap (`meshtastic/firmware#4775`, see below)
+  only matters if one of these two radios ever talks to an LR1120/LR1121 node.
+- **No TCXO config needed** — Ra-01/Ra-01H are plain XTAL, same as EMAX's SX1276.
+- Verify PA config separately for each module (Ra-01 vs Ra-01H may have different power
+  ceilings/PA path) — this is exactly the class of bug the EMAX port hit (SX1276 overdriving
+  the PA by 15dB, see "How the EMAX PA works" below). Do not assume Ra-01H's config carries
+  over unmeasured.
+
+**RF/power caveats specific to this pair, not present on bayckrc's single dual-band chip:**
+`bayckrc_dual_band`'s two LR1120s never risk desensing each other on transmit, because the
+*same chip* handles both bands and RadioLib/RF-switch logic already sequences it. Two
+*separate* transceivers transmitting near-simultaneously is a real risk here:
+- SX127x RX input tolerates roughly 0dBm before damage/desense; a nearby +20dBm TX (either
+  radio) can degrade or destroy the other radio's front end even across different bands.
+- Antenna separation 30-50cm minimum, perpendicular, ground plane between modules. Never
+  power up either module without its antenna attached.
+- TX must be serialized in firmware (mutex around the shared SPI bus + both radios' keyup) —
+  same as the mirror-send code already does sequentially, but confirm on hardware that the
+  timing gap between the two `iface2`/`iface` sends is enough that both PAs are never keyed
+  at once; the shared-AMS1117 brownout risk is real at ~120mA peak per module.
+- 433MHz at 20dBm exceeds the 10mW ERP limit in most of ITU Region 1 — check local
+  allocation before setting TX power that high.
+
+Full wiring diagram, net list, power/decoupling notes, and RF safety details are in
+`docs/dual-band-meshtastic-bridge.md` (written before this bayckrc precedent was found —
+its custom RadioLib-bridge code sketch there is now superseded by "just port
+bayckrc_dual_band", but the wiring/power/RF sections still apply unchanged).
+
+Status: design/planning only. Nothing built or flashed yet.
+
+---
+
 ## FIXED: unified_esp32c3_lr1121_rx crashed generating PKI keys on first region set
 
 Setting a region for the first time (fresh flash) triggers `CryptoEngine::generateKeyPair()`
