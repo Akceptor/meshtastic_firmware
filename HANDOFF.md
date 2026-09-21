@@ -32,8 +32,55 @@ avoids all of that because both radios belong to the same `Router`/nodeDB.
   the bayckrc port. Need to thread those through the same way, plus the constructor's
   `isSecondary` flag into the base `RadioLibInterface` constructor.
 - New variant dir `variants/esp32/<name>/` with `variant.h` + `platformio.ini`. Pins already
-  worked out in `docs/dual-band-meshtastic-bridge.md` (shared VSPI: SCK18/MISO19/MOSI23;
-  radio A NSS5/RST14/DIO0-26/DIO1-33; radio B NSS4/RST27/DIO0-25/DIO1-32).
+  worked out (shared VSPI bus, per-radio NSS/RST/IRQ):
+
+  ```
+                      ESP32-WROOM-32U DevKit
+                      ┌───────────────────────┐
+     3V3 ────┬────────┤ 3V3               GND ├────┬──── GND
+             │        │                       │    │
+             │   ┌────┤ 18 (SCK)   VSPI       │    │
+             │   │ ┌──┤ 19 (MISO)             │    │
+             │   │ │ ┌┤ 23 (MOSI)             │    │
+             │   │ │ ││                       │    │
+             │   │ │ ││ 5   ──► NSS_A         │    │
+             │   │ │ ││ 14  ──► RST_A         │    │
+             │   │ │ ││ 26  ◄── DIO0_A        │    │
+             │   │ │ ││ 33  ◄── DIO1_A        │    │
+             │   │ │ ││                       │    │
+             │   │ │ ││ 4   ──► NSS_B         │    │
+             │   │ │ ││ 27  ──► RST_B         │    │
+             │   │ │ ││ 25  ◄── DIO0_B        │    │
+             │   │ │ ││ 32  ◄── DIO1_B        │    │
+                      └───────────────────────┘
+             │   │ │ │
+        ┌────┴───┴─┴─┴───────┐          ┌───────────────────┐
+        │  Ra-01  (SX1278)   │          │  Ra-01H (SX1276)  │
+        │  433 MHz           │          │  868/915 MHz      │
+        │ ANT ─── 433 whip   │          │ ANT ─── 868 whip  │
+        └────────────────────┘          └───────────────────┘
+  ```
+
+  | Signal | ESP32 | Ra-01 (433) | Ra-01H (868) |
+  |---|---|---|---|
+  | SCK    | 18  | SCK  | SCK  |
+  | MISO   | 19  | MISO | MISO |
+  | MOSI   | 23  | MOSI | MOSI |
+  | NSS_A  | 5   | NSS  | —    |
+  | RST_A  | 14  | RST  | —    |
+  | DIO0_A | 26  | DIO0 | —    |
+  | DIO1_A | 33  | DIO1 | —    |
+  | NSS_B  | 4   | —    | NSS  |
+  | RST_B  | 27  | —    | RST  |
+  | DIO0_B | 25  | —    | DIO0 |
+  | DIO1_B | 32  | —    | DIO1 |
+  | 3V3    | 3V3 | 3V3  | 3V3  |
+  | GND    | GND | GND ×3 | GND ×3 |
+
+  GPIO 6-11 (SPI flash), 0/2/12/15 (strapping) avoided. 10k pull-up on each NSS so
+  neither radio listens to the bus while the ESP32 boots and the pins float. Clock the
+  shared bus at 8MHz — SX127x tops out at 10MHz. Full derivation, power/decoupling and
+  RF-safety detail in `docs/dual-band-meshtastic-bridge.md`.
 - **No `rfswitch.h` needed** — that mechanism is LR11x0-specific (internal DIO-driven RF
   switch table). SX127x has no equivalent; RadioLib drives PA_BOOST directly.
 - **No sync-word workaround needed** for this pair specifically — both radios are SX127x,
