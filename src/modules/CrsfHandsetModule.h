@@ -1,6 +1,5 @@
 #pragma once
 
-#include "Observer.h"
 #include "concurrency/OSThread.h"
 #include "mesh/MeshTypes.h"
 #include <Arduino.h>
@@ -34,7 +33,7 @@ class CrsfHandsetModule : private concurrency::OSThread
     void setDirection(bool transmit);
     void applyPolarityAndBaud();
     void updateMeshSnapshot();
-    int onTextMessageReceived(const meshtastic_MeshPacket *mp);
+    void rebuildMessagesFromStore();
 
     RxState rxState = RxState::WaitSync;
     uint8_t rxBuf[64];
@@ -111,13 +110,11 @@ class CrsfHandsetModule : private concurrency::OSThread
     uint8_t mainMsgTextCount = 0;
     void buildCannedMessageOptions(MeshSnapshot &snap);
 
-    // Ring of received texts, newest first; written by onTextMessageReceived, read by updateMeshSnapshot.
-    // Both run on the main thread (TextMessageModule notifies observers synchronously from packet handling,
-    // same thread as the OSThread scheduler), so no locking is needed despite the shared state.
+    // Newest-first cache of MessageStore, main thread only; rebuilt when the store changes.
     MeshMsgSnapshot textMsgRing[MESH_MSG_SLOTS];
     uint8_t textMsgCount = 0;
-    CallbackObserver<CrsfHandsetModule, const meshtastic_MeshPacket *> textMessageObserver =
-        CallbackObserver<CrsfHandsetModule, const meshtastic_MeshPacket *>(this, &CrsfHandsetModule::onTextMessageReceived);
+    size_t lastStoreSize = SIZE_MAX;
+    uint32_t lastStoreNewestTs = 0;
 };
 
 // Shown in System > CRSF Status; USB can't be attached while the module is in the JR bay.

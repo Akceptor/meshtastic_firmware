@@ -6,7 +6,7 @@
 #include "CrsfHandsetModule.h"
 #include "MeshService.h"
 #include "NodeDB.h"
-#include "TextMessageModule.h"
+#include "MessageStore.h"
 #include "Throttle.h"
 #include "mesh/MeshTypes.h"
 #include "mesh/Router.h"
@@ -55,7 +55,8 @@ constexpr uint8_t CRSF_FIELD_NODES_FOLDER = CRSF_FIELD_MSG_BASE + CRSF_MSG_SLOT_
 constexpr uint8_t CRSF_FIELD_NODES_REFRESH = CRSF_FIELD_NODES_FOLDER + 1; // 61, child of NODES_FOLDER
 constexpr uint8_t CRSF_FIELD_ROOT_REFRESH = CRSF_FIELD_NODES_REFRESH + 1; // 62, root
 constexpr uint8_t CRSF_FIELD_VERSION = CRSF_FIELD_ROOT_REFRESH + 1; // 63, root
-constexpr uint8_t CRSF_FIELD_STATIC_COUNT = CRSF_FIELD_VERSION; // ids 1..63 always present, regardless of nodeCount
+constexpr uint8_t CRSF_FIELD_MSG_EMPTY = CRSF_FIELD_VERSION + 1; // 64, child of MESSAGES_FOLDER
+constexpr uint8_t CRSF_FIELD_STATIC_COUNT = CRSF_FIELD_MSG_EMPTY; // ids 1..64 always present, regardless of nodeCount
 // Each node gets an 8-id block: the folder itself, then 7 fixed-id INFO rows (Name/Id/SNR/Heard/Hops/HW/Bat).
 constexpr uint8_t CRSF_FIELD_NODES_BASE = CRSF_FIELD_STATIC_COUNT + 1; // first node folder's field id; node k's folder = BASE + 8*k
 constexpr uint8_t CRSF_FIELD_NODE_BLOCK_SIZE = 8;
@@ -175,8 +176,6 @@ CrsfHandsetModule::CrsfHandsetModule() : concurrency::OSThread("CrsfHandset")
     crsfPort.setRxTimeout(2);
     crsfPort.onReceive([this]() { onUartData(); }, true);
     crsfPort.onReceiveError([this](hardwareSerial_error_t e) { onUartError((int)e); });
-    // TextMessageModule is constructed before us (see Modules.cpp), and notifies synchronously on the main thread.
-    textMessageObserver.observe(textMessageModule);
     LOG_INFO("CrsfHandset: listening on GPIO%d @ %u baud", CRSF_UART_PIN, CRSF_BAUDS[0]);
 }
 
@@ -299,7 +298,7 @@ uint8_t CrsfHandsetModule::buildParameterEntryBody(uint8_t fieldId)
     uint8_t *payload = entryBody;
     uint8_t i = 0;
     uint8_t parent = 0;
-    if (fieldId == CRSF_FIELD_MSG_REFRESH)
+    if (fieldId == CRSF_FIELD_MSG_REFRESH || fieldId == CRSF_FIELD_MSG_EMPTY)
         parent = CRSF_FIELD_MESSAGES_FOLDER;
     else if (fieldId == CRSF_FIELD_NODES_REFRESH)
         parent = CRSF_FIELD_NODES_FOLDER;
@@ -349,6 +348,7 @@ uint8_t CrsfHandsetModule::buildParameterEntryBody(uint8_t fieldId)
         payload[i++] = CRSF_FIELD_MSG_REFRESH;
         for (uint8_t n = 0; n < MESH_MSG_SLOTS; n++)
             payload[i++] = CRSF_FIELD_MSG_BASE + CRSF_MSG_BLOCK_SIZE * n;
+        payload[i++] = CRSF_FIELD_MSG_EMPTY;
         payload[i++] = 0xFF;
     } else if (isRefreshField(fieldId)) {
         // Always idle: the write handler replies immediately (see handleFrame), never leaving it executing.
@@ -361,11 +361,15 @@ uint8_t CrsfHandsetModule::buildParameterEntryBody(uint8_t fieldId)
         payload[i++] = CRSF_CMD_TIMEOUT_10MS;
         memcpy(&payload[i], info, sizeof(info));
         i += sizeof(info);
+    } else if (fieldId == CRSF_FIELD_MSG_EMPTY) {
+        // The Lua re-reads the hidden bit on every load (only names are cached), so this toggles live.
+        payload[i++] = CRSF_PARAM_TYPE_INFO | (snap.messages[0].label[0] ? 0x80 : 0);
+        appendInfoField(payload, i, "Nothing received", "");
     } else if (inMsgRange && msgBlockOffset == 0) {
         // Message folder: opening it is a pure Lua-local state change (fieldFolderOpen), no round trip needed.
         const MeshMsgSnapshot &msg = snap.messages[msgIdx];
         const char *label = msg.label[0] ? msg.label : "-";
-        payload[i++] = CRSF_PARAM_TYPE_FOLDER;
+        payload[i++] = CRSF_PARAM_TYPE_FOLDER | (msg.label[0] ? 0 : 0x80);
         memcpy(&payload[i], label, strlen(label) + 1);
         i += strlen(label) + 1;
         for (uint8_t r = 1; r <= CRSF_MSG_ROW_COUNT; r++)
@@ -575,8 +579,6 @@ void CrsfHandsetModule::sendSelectedMessage()
     sendStatus = CRSF_LCS_IDLE;
 }
 
-// TextMessageModule notifies synchronously from packet handling, on the main thread, so this can write
-// textMsgRing directly (see header comment); excludes our own sendSelectedMessage() broadcasts.
 static void shortNameOf(NodeNum num, char *out, size_t outLen)
 {
     const meshtastic_NodeInfoLite *ni = nodeDB->getMeshNode(num);
@@ -586,7 +588,6 @@ static void shortNameOf(NodeNum num, char *out, size_t outLen)
         snprintf(out, outLen, "%04x", (unsigned)(num & 0xFFFF));
 }
 
-// Truncates combined ("sender: text") to <=labelLen-1 chars, ending in "..." if it didn't fit.
 static void buildMsgLabel(char *label, size_t labelLen, const char *combined)
 {
     const size_t maxChars = labelLen - 1;
@@ -657,34 +658,31 @@ static void wrapMessageLines(char lines[][22], uint8_t maxLines, const char *tex
     }
 }
 
-int CrsfHandsetModule::onTextMessageReceived(const meshtastic_MeshPacket *mp)
+// Sourced from MessageStore (persisted to flash) so the list survives the module losing power in the bay.
+void CrsfHandsetModule::rebuildMessagesFromStore()
 {
-    if (mp->from == nodeDB->getNodeNum())
-        return 0;
+    const auto &stored = messageStore.getMessages();
+    const uint32_t newestTs = stored.empty() ? 0 : stored.back().timestamp;
+    if (stored.size() == lastStoreSize && newestTs == lastStoreNewestTs)
+        return;
+    lastStoreSize = stored.size();
+    lastStoreNewestTs = newestTs;
 
-    for (uint8_t j = MESH_MSG_SLOTS - 1; j > 0; j--)
-        textMsgRing[j] = textMsgRing[j - 1];
-    MeshMsgSnapshot &entry = textMsgRing[0];
-
-    char sender[8];
-    shortNameOf(mp->from, sender, sizeof(sender));
-
-    char textBuf[201];
-    size_t n = mp->decoded.payload.size;
-    if (n > sizeof(textBuf) - 1)
-        n = sizeof(textBuf) - 1;
-    memcpy(textBuf, mp->decoded.payload.bytes, n);
-    textBuf[n] = '\0';
-
-    char combined[216];
-    snprintf(combined, sizeof(combined), "%s: %s", sender, textBuf);
-
-    buildMsgLabel(entry.label, sizeof(entry.label), combined);
-    wrapMessageLines(entry.lines, MESH_MSG_ROW_COUNT, combined);
-
-    if (textMsgCount < MESH_MSG_SLOTS)
-        textMsgCount++;
-    return 0;
+    const NodeNum myNode = nodeDB->getNodeNum();
+    textMsgCount = 0;
+    for (auto it = stored.rbegin(); it != stored.rend() && textMsgCount < MESH_MSG_SLOTS; ++it) {
+        if (it->sender == myNode)
+            continue;
+        char sender[8];
+        shortNameOf(it->sender, sender, sizeof(sender));
+        const char *text = MessageStore::getText(*it);
+        char combined[216];
+        snprintf(combined, sizeof(combined), "%s: %.*s", sender, (int)std::min<uint16_t>(it->textLength, 200),
+                 text ? text : "");
+        MeshMsgSnapshot &entry = textMsgRing[textMsgCount++];
+        buildMsgLabel(entry.label, sizeof(entry.label), combined);
+        wrapMessageLines(entry.lines, MESH_MSG_ROW_COUNT, combined);
+    }
 }
 
 static void formatAge(char *out, size_t outLen, uint32_t agoSecs)
@@ -792,7 +790,7 @@ void CrsfHandsetModule::updateMeshSnapshot()
 
     buildCannedMessageOptions(snap);
 
-    // textMsgRing is main-thread-owned (see header); a plain copy is enough to publish it to the UART task.
+    rebuildMessagesFromStore();
     for (uint8_t j = 0; j < MESH_MSG_SLOTS; j++)
         snap.messages[j] = (j < textMsgCount) ? textMsgRing[j] : MeshMsgSnapshot{};
 
