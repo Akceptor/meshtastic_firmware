@@ -29,8 +29,42 @@ works perfectly, which makes it look like a transmitter fault when nothing is wr
 `MESHTASTIC_LORA_SYNCWORD` is defined in `src/mesh/RadioLibInterface.h` and defaults to
 `0x2b`, so stock builds are unchanged.
 
+The build flag only sets the default. It can also be switched at runtime on the device
+(LoRa screen → OK → Sync Word → "LR11xx compat (0x12)"); the choice is kept in NVS and
+survives reflashing.
+
 > **Every node in the mesh must be built with the same value.** A node built with `0x12`
 > is invisible to all stock Meshtastic devices. Only appropriate for a closed mesh.
+
+## ExpressLRS handset (JR bay) and Lua menu
+
+Plugged into an EdgeTX handset's JR bay (Model → External RF = **Crossfire**, **400k** baud),
+the stock ExpressLRS Lua script shows a small Meshtastic UI:
+
+```
+ELRS->Meshtastic
+Message     Hi from ExpressLRS!   ← canned selector (+ canned message module list)
+[Send]                            ← channel-0 broadcast, 5 s cooldown
+> Messages                        ← [Refresh], last 5 received (folder per message)
+> Nodes                           ← [Refresh], 10 newest (folder: Name/Id/SNR/Heard/Hops/HW/Bat)
+[Refresh]
+Version     2.7.26.…
+```
+
+- New messages/labels appear after a **[Refresh]** (or RTN at root); a refresh lands you back
+  at root — that's the Lua rebuilding its field list, not a bug.
+- Messages come from `MessageStore`, autosaved every 60 s (`MESSAGE_AUTOSAVE_INTERVAL_SEC`),
+  so they survive pulling the module out.
+- No free-text entry: the ELRS Lua doesn't implement STRING editing. Edit the canned list
+  from the phone app instead.
+- **Diagnostics without USB** (USB and the bay can't be connected at once): System screen →
+  OK → CRSF Status — byte/frame/error/ping/param counters, locked baud + polarity, the
+  reset reason of this and the previous boot (PANIC / TWDT / BOD / PWR …), last raw bytes.
+
+Link details: GPIO13 single-wire half duplex, **inverted**, direction switched by hand via
+the GPIO matrix (RS485 mode doesn't tri-state TX on ESP32); a watchdog cycles baud/polarity
+until frames parse. Implementation and the Lua quirks it works around:
+`src/modules/CrsfHandsetModule.cpp`, and the CRSF section of `HANDOFF.md`.
 
 ## How the PA is driven
 
@@ -86,7 +120,8 @@ and do not apply now that the drive level is correct.
 
 - Fan on GPIO32, driven high at init
 - NeoPixel on GPIO27, GRB, 1 LED
-- 5-way joystick on GPIO33 (ADC), values 2010 / 1230 / 635 / 2730 / 0 / 4095
+- 5-way joystick on GPIO33 (ADC), values 2010 / 1230 / 635 / 2730 / 0 / 4095; holding OK
+  3 s shuts down (deep sleep, no joystick wake — replug to recover)
 - DIO1 not connected; DIO0 carries both RxDone and TxDone
 - `MESHTASTIC_EXCLUDE_*` flags in `platformio.ini` trim unused modules to keep the OTA
   image inside the dual-app partition layout
