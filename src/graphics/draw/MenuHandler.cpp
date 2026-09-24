@@ -2473,11 +2473,11 @@ void menuHandler::crsfStatusMenu()
 {
     static char message[256];
     snprintf(message, sizeof(message),
-             "RX:%lu E:%lu F:%lu B:%lu\nPing:%lu Sent:%lu Par:%lu\n%lu %s %s<%s\n%02x%02x%02x%02x %02x%02x%02x%02x",
+             "RX:%lu E:%lu F:%lu B:%lu\nPing:%lu Sent:%lu Par:%lu Hi:%lu\n%lu %s %s<%s\n%02x%02x%02x%02x %02x%02x%02x%02x",
              (unsigned long)crsfHandsetStats.bytesRx, (unsigned long)crsfHandsetStats.uartErrors,
              (unsigned long)crsfHandsetStats.framesRx, (unsigned long)crsfHandsetStats.badCrc,
              (unsigned long)crsfHandsetStats.pingsRx, (unsigned long)crsfHandsetStats.infoSent,
-             (unsigned long)crsfHandsetStats.paramReads,
+             (unsigned long)crsfHandsetStats.paramReads, (unsigned long)crsfHandsetStats.helloSent,
              (unsigned long)crsfHandsetStats.baud, crsfHandsetStats.inverted ? "INV" : "NRM", crsfHandsetStats.resetNow,
              crsfHandsetStats.resetPrev, crsfHandsetStats.lastBytes[0], crsfHandsetStats.lastBytes[1],
              crsfHandsetStats.lastBytes[2], crsfHandsetStats.lastBytes[3], crsfHandsetStats.lastBytes[4],
