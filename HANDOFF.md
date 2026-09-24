@@ -280,6 +280,23 @@ overflow, so this may just have been the ping-path PANIC above.
 - USB and JR bay can't be attached at once, so bay behaviour is only observable via the
   CRSF Status screen / persisted reset reason.
 
+**Lua UI (verified on hardware):** title `ELRS->Meshtastic`; root = Message (canned SELECT:
+"Hi from ExpressLRS!" + `cannedMessageModuleConfig.messages`), [Send] (channel-0 broadcast, 5 s
+cooldown), > Messages (last 5 received, each a folder: header = "ABCD: preview...", rows = word-wrapped
+text), > Nodes (10 newest, each a folder with Name/Id/SNR/Heard/Hops/HW/Bat rows), [Refresh] (also
+inside both folders), Version. Field-id layout is in named constants at the top of
+`CrsfHandsetModule.cpp`.
+
+ELRS Lua (`ExpressLRS/src/lua/elrs.lua`) constraints this is built around — re-derive nothing:
+- Field **names are cached** per field object; only a Device Info with a different `fldcnt` makes
+  it reallocate (`changeDeviceId`). Refresh buttons and pings flip a hidden trailing field and push
+  an unsolicited Device Info; side effect: the Lua lands back at root.
+- Folders don't reload on open. COMMAND popups show a **title only** (`popupConfirmation(t, e)`),
+  and a status-0 reply just closes the popup — so details are rows in folders, not popups.
+- STRING editing is not implemented in the Lua → no free-text input; canned SELECT instead.
+- The UART callback (uart_event_task) only reads a double-buffered snapshot built on the main
+  thread; no NodeDB, heap or logging there.
+
 **Open items:**
 - Long soak in the bay with Lua open to confirm the PANIC is gone for good.
 - Find what undoes the constructor's GPIO13/UART1 setup (root cause 3); the watchdog masks it.

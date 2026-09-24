@@ -10,6 +10,7 @@
 #include "Throttle.h"
 #include "mesh/MeshTypes.h"
 #include "mesh/Router.h"
+#include "mesh/generated/meshtastic/cannedmessages.pb.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -19,6 +20,12 @@
 #include <esp_system.h>
 #include <esp_rom_gpio.h>
 #include <soc/gpio_sig_map.h>
+
+// CannedMessageModuleConfig is a plain global (not declared in a header) owned by CannedMessageModule.cpp,
+// which only builds under this same guard (see Modules.cpp).
+#if HAS_SCREEN && !MESHTASTIC_EXCLUDE_CANNEDMESSAGES
+extern meshtastic_CannedMessageModuleConfig cannedMessageModuleConfig;
+#endif
 
 namespace
 {
@@ -32,28 +39,49 @@ constexpr uint8_t CRSF_PARAM_TYPE_SELECT = 9;
 constexpr uint8_t CRSF_PARAM_TYPE_FOLDER = 11;
 constexpr uint8_t CRSF_PARAM_TYPE_INFO = 12;
 constexpr uint8_t CRSF_PARAM_TYPE_COMMAND = 13;
-constexpr uint8_t CRSF_FIELD_VERSION = 1;
-constexpr uint8_t CRSF_FIELD_HELLO = 2;
+// Root order (id order == Lua display order within a parent): Message, Send, Messages folder,
+// Nodes folder, Refresh, Version; message/node blocks and each folder's own Refresh sit off to the side.
+constexpr uint8_t CRSF_FIELD_MESSAGE_SELECT = 1;
+constexpr uint8_t CRSF_FIELD_SEND = 2;
 constexpr uint8_t CRSF_FIELD_MESSAGES_FOLDER = 3;
-constexpr uint8_t CRSF_FIELD_REFRESH = 4;
-constexpr uint8_t CRSF_FIELD_MSG_BASE = 5; // 5 message slots occupy [BASE, BASE+MESH_MSG_SLOTS)
-constexpr uint8_t CRSF_FIELD_NODES_FOLDER = 10;
-constexpr uint8_t CRSF_FIELD_STATIC_COUNT = 10; // fields 1..10 always present, regardless of nodeCount
+constexpr uint8_t CRSF_FIELD_MSG_REFRESH = 4; // child of MESSAGES_FOLDER
+constexpr uint8_t CRSF_FIELD_MSG_BASE = 5; // first message folder id; message k's folder = BASE + BLOCK_SIZE*k
+constexpr uint8_t CRSF_MSG_ROW_COUNT = 10; // must match CrsfHandsetModule::MESH_MSG_ROW_COUNT (static_assert'd below)
+constexpr uint8_t CRSF_MSG_BLOCK_SIZE = CRSF_MSG_ROW_COUNT + 1; // folder id + 10 fixed-id INFO rows
+// Mirrors CrsfHandsetModule::MESH_MSG_SLOTS (private; can't reference it from this free-function scope,
+// so it's duplicated here and cross-checked by static_assert in the constructor).
+constexpr uint8_t CRSF_MSG_SLOT_COUNT = 5;
+constexpr uint8_t CRSF_FIELD_NODES_FOLDER = CRSF_FIELD_MSG_BASE + CRSF_MSG_SLOT_COUNT * CRSF_MSG_BLOCK_SIZE; // 60
+constexpr uint8_t CRSF_FIELD_NODES_REFRESH = CRSF_FIELD_NODES_FOLDER + 1; // 61, child of NODES_FOLDER
+constexpr uint8_t CRSF_FIELD_ROOT_REFRESH = CRSF_FIELD_NODES_REFRESH + 1; // 62, root
+constexpr uint8_t CRSF_FIELD_VERSION = CRSF_FIELD_ROOT_REFRESH + 1; // 63, root
+constexpr uint8_t CRSF_FIELD_STATIC_COUNT = CRSF_FIELD_VERSION; // ids 1..63 always present, regardless of nodeCount
 // Each node gets an 8-id block: the folder itself, then 7 fixed-id INFO rows (Name/Id/SNR/Heard/Hops/HW/Bat).
-constexpr uint8_t CRSF_FIELD_NODES_BASE = 11; // first node folder's field id; node k's folder = BASE + 8*k
+constexpr uint8_t CRSF_FIELD_NODES_BASE = CRSF_FIELD_STATIC_COUNT + 1; // first node folder's field id; node k's folder = BASE + 8*k
 constexpr uint8_t CRSF_FIELD_NODE_BLOCK_SIZE = 8;
 constexpr uint8_t CRSF_NODE_ROW_COUNT = 7;
 // lcs* status codes from the ELRS Lua fieldCommand handlers.
 constexpr uint8_t CRSF_LCS_IDLE = 0;
 constexpr uint8_t CRSF_LCS_CLICK = 1;
 constexpr uint8_t CRSF_LCS_EXECUTING = 2;
-constexpr uint8_t CRSF_LCS_ASK_CONFIRM = 3;
-constexpr uint8_t CRSF_LCS_CONFIRMED = 4;
 constexpr uint8_t CRSF_LCS_CANCEL = 5;
-constexpr uint8_t CRSF_LCS_QUERY = 6;
-constexpr uint8_t CRSF_HELLO_TIMEOUT_10MS = 50; // Lua polls every timeout*10ms while the popup is open
-constexpr uint8_t CRSF_POPUP_TIMEOUT_10MS = 5; // same cadence, used by message/node detail popups
-constexpr uint32_t CRSF_HELLO_COOLDOWN_MS = 5000;
+constexpr uint8_t CRSF_CMD_TIMEOUT_10MS = 50; // Lua polls every timeout*10ms while the popup is open
+constexpr uint32_t CRSF_SEND_COOLDOWN_MS = 5000;
+
+bool isRefreshField(uint8_t fieldId)
+{
+    return fieldId == CRSF_FIELD_MSG_REFRESH || fieldId == CRSF_FIELD_NODES_REFRESH ||
+           fieldId == CRSF_FIELD_ROOT_REFRESH;
+}
+
+const char *cannedMessagesRaw()
+{
+#if HAS_SCREEN && !MESHTASTIC_EXCLUDE_CANNEDMESSAGES
+    return cannedMessageModuleConfig.messages;
+#else
+    return "Hi|Bye|Yes|No|Ok"; // CannedMessageModule isn't built on this board; keep the same stock defaults
+#endif
+}
 constexpr uint8_t CRSF_ADDRESS_BROADCAST = 0x00;
 constexpr uint8_t CRSF_ADDRESS_CRSF_TRANSMITTER = 0xEE;
 // Same candidates as ExpressLRS TxToHandsetBauds.
@@ -124,9 +152,18 @@ CrsfHandsetStats crsfHandsetStats;
 
 CrsfHandsetModule::CrsfHandsetModule() : concurrency::OSThread("CrsfHandset")
 {
-    // Pre-C++20, std::atomic's default constructor leaves the value indeterminate; init explicitly.
-    for (auto &s : msgPopupStatus)
-        s = CRSF_LCS_IDLE;
+    // Cross-check the id-layout constants duplicated across the class (private, header) and the
+    // anonymous namespace (free functions can't see private members) so a change to one can't silently
+    // desync from the other.
+    static_assert(MESH_MSG_SLOTS == CRSF_MSG_SLOT_COUNT, "CRSF_MSG_SLOT_COUNT must match MESH_MSG_SLOTS");
+    static_assert(MESH_MSG_ROW_COUNT == CRSF_MSG_ROW_COUNT, "CRSF_MSG_ROW_COUNT must match MESH_MSG_ROW_COUNT");
+    static_assert(CRSF_FIELD_NODES_FOLDER == CRSF_FIELD_MSG_BASE + MESH_MSG_SLOTS * CRSF_MSG_BLOCK_SIZE,
+                  "message id blocks must exactly fill [MSG_BASE, NODES_FOLDER)");
+    static_assert(CRSF_FIELD_NODES_BASE == CRSF_FIELD_STATIC_COUNT + 1,
+                  "node blocks must start right after the static field range");
+    static_assert((unsigned)CRSF_FIELD_STATIC_COUNT + (unsigned)CRSF_FIELD_NODE_BLOCK_SIZE * MESH_MAX_NODES + 1 <= 255,
+                  "fieldCnt (static + node blocks + hidden parity field) must fit uint8_t");
+    static_assert(MSG_OPTION_MAX_COUNT >= 1, "message SELECT needs at least the fixed 'Hi from ExpressLRS!' option");
     recordResetReason();
     crsfPort.begin(CRSF_BAUDS[0], SERIAL_8N1, CRSF_UART_PIN, CRSF_UART_PIN, false);
     crsfPort.setTimeout(0);
@@ -203,7 +240,8 @@ void CrsfHandsetModule::sendFrame(uint8_t type, uint8_t destAddr, const uint8_t 
 
 void CrsfHandsetModule::sendDeviceInfo(uint8_t destAddr)
 {
-    static const char name[] = "Meshtastic " xstr(APP_VERSION);
+    // The Lua uses this as its root-screen title (deviceName); the firmware version is its own INFO row.
+    static const char name[] = "ELRS->Meshtastic";
     const uint32_t softwareVer = packSoftwareVersion(optstr(APP_VERSION));
 
     uint8_t payload[sizeof(name) + 14];
@@ -221,8 +259,8 @@ void CrsfHandsetModule::sendDeviceInfo(uint8_t destAddr)
     // Trailing hidden field toggles on/off with fieldGen's low bit, forcing the Lua to notice fldcnt
     // changed and reload every field (see the hidden-field branch in buildParameterEntryBody).
     const uint8_t hiddenFieldPresent = fieldGen.load() & 1;
-    payload[i++] =
-        CRSF_FIELD_STATIC_COUNT + CRSF_FIELD_NODE_BLOCK_SIZE * snap.nodeCount + hiddenFieldPresent; // fieldCnt
+    payload[i++] = (uint8_t)(CRSF_FIELD_STATIC_COUNT + CRSF_FIELD_NODE_BLOCK_SIZE * snap.nodeCount +
+                              hiddenFieldPresent); // fieldCnt
     payload[i++] = 0; // parameterVersion
     sendFrame(CRSF_FRAMETYPE_DEVICE_INFO, destAddr, payload, i);
     crsfHandsetStats.infoSent++;
@@ -251,25 +289,50 @@ uint8_t CrsfHandsetModule::buildParameterEntryBody(uint8_t fieldId)
     const uint8_t nodeBlockOffset = inNodeRange ? (fieldId - CRSF_FIELD_NODES_BASE) % CRSF_FIELD_NODE_BLOCK_SIZE : 0;
     const uint8_t nodeFolderId = fieldId - nodeBlockOffset;
     const uint8_t nodeIdx = inNodeRange ? (fieldId - CRSF_FIELD_NODES_BASE) / CRSF_FIELD_NODE_BLOCK_SIZE : 0;
+    // Message k's folder id and row ids within [CRSF_FIELD_MSG_BASE, CRSF_FIELD_NODES_FOLDER); offset 0 =
+    // folder, 1..10 = rows. Mirrors the node block math above.
+    const bool inMsgRange = fieldId >= CRSF_FIELD_MSG_BASE && fieldId < CRSF_FIELD_NODES_FOLDER;
+    const uint8_t msgBlockOffset = inMsgRange ? (fieldId - CRSF_FIELD_MSG_BASE) % CRSF_MSG_BLOCK_SIZE : 0;
+    const uint8_t msgFolderId = fieldId - msgBlockOffset;
+    const uint8_t msgIdx = inMsgRange ? (fieldId - CRSF_FIELD_MSG_BASE) / CRSF_MSG_BLOCK_SIZE : 0;
 
     uint8_t *payload = entryBody;
     uint8_t i = 0;
     uint8_t parent = 0;
-    if (fieldId == CRSF_FIELD_REFRESH || (fieldId >= CRSF_FIELD_MSG_BASE && fieldId < CRSF_FIELD_MSG_BASE + MESH_MSG_SLOTS))
+    if (fieldId == CRSF_FIELD_MSG_REFRESH)
         parent = CRSF_FIELD_MESSAGES_FOLDER;
+    else if (fieldId == CRSF_FIELD_NODES_REFRESH)
+        parent = CRSF_FIELD_NODES_FOLDER;
+    else if (inMsgRange)
+        parent = (msgBlockOffset == 0) ? CRSF_FIELD_MESSAGES_FOLDER : msgFolderId;
     else if (inNodeRange)
         parent = (nodeBlockOffset == 0) ? CRSF_FIELD_NODES_FOLDER : nodeFolderId;
     payload[i++] = parent;
 
-    if (fieldId == CRSF_FIELD_HELLO) {
-        static const char fieldName[] = "Say Hello";
-        const char *info = helloInfo.load();
+    if (fieldId == CRSF_FIELD_MESSAGE_SELECT) {
+        static const char fieldName[] = "Message";
+        const uint8_t maxIdx = snap.msgOptionCount > 0 ? snap.msgOptionCount - 1 : 0;
+        const uint8_t value = std::min<uint8_t>(msgSelectIndex.load(), maxIdx);
+        payload[i++] = CRSF_PARAM_TYPE_SELECT;
+        memcpy(&payload[i], fieldName, sizeof(fieldName));
+        i += sizeof(fieldName);
+        const size_t optsLen = strlen(snap.msgOptionsStr) + 1;
+        memcpy(&payload[i], snap.msgOptionsStr, optsLen);
+        i += optsLen;
+        payload[i++] = value;
+        payload[i++] = 0; // min
+        payload[i++] = maxIdx; // max
+        payload[i++] = 0; // default
+        payload[i++] = 0; // units ""
+    } else if (fieldId == CRSF_FIELD_SEND) {
+        static const char fieldName[] = "Send";
+        const char *info = sendInfo.load();
         const size_t infoLen = strlen(info) + 1;
         payload[i++] = CRSF_PARAM_TYPE_COMMAND;
         memcpy(&payload[i], fieldName, sizeof(fieldName));
         i += sizeof(fieldName);
-        payload[i++] = helloStatus.load();
-        payload[i++] = CRSF_HELLO_TIMEOUT_10MS;
+        payload[i++] = sendStatus.load();
+        payload[i++] = CRSF_CMD_TIMEOUT_10MS;
         memcpy(&payload[i], info, infoLen);
         i += infoLen;
     } else if (fieldId == CRSF_FIELD_VERSION) {
@@ -283,46 +346,44 @@ uint8_t CrsfHandsetModule::buildParameterEntryBody(uint8_t fieldId)
         memcpy(&payload[i], fieldName, sizeof(fieldName));
         i += sizeof(fieldName);
         // Child id list terminated by 0xFF, matching ELRS's own folder encoding (Lua ignores it for us).
-        payload[i++] = CRSF_FIELD_REFRESH;
+        payload[i++] = CRSF_FIELD_MSG_REFRESH;
         for (uint8_t n = 0; n < MESH_MSG_SLOTS; n++)
-            payload[i++] = CRSF_FIELD_MSG_BASE + n;
+            payload[i++] = CRSF_FIELD_MSG_BASE + CRSF_MSG_BLOCK_SIZE * n;
         payload[i++] = 0xFF;
-    } else if (fieldId == CRSF_FIELD_REFRESH) {
-        // Lua re-reads a folder's fields only when leaving edit on a type<10 field (reloadRelatedFields),
-        // and greys out selects with <2 options — so this is a two-option SELECT, not a COMMAND.
+    } else if (isRefreshField(fieldId)) {
+        // Always idle: the write handler replies immediately (see handleFrame), never leaving it executing.
         static const char fieldName[] = "Refresh";
-        static const char options[] = "OK;OK";
-        payload[i++] = CRSF_PARAM_TYPE_SELECT;
+        static const char info[] = "";
+        payload[i++] = CRSF_PARAM_TYPE_COMMAND;
         memcpy(&payload[i], fieldName, sizeof(fieldName));
         i += sizeof(fieldName);
-        memcpy(&payload[i], options, sizeof(options));
-        i += sizeof(options);
-        payload[i++] = 0; // value
-        payload[i++] = 0; // min
-        payload[i++] = 1; // max
-        payload[i++] = 0; // default
-        payload[i++] = 0; // units ""
-    } else if (fieldId >= CRSF_FIELD_MSG_BASE && fieldId < CRSF_FIELD_MSG_BASE + MESH_MSG_SLOTS) {
-        const MeshMsgSnapshot &msg = snap.messages[fieldId - CRSF_FIELD_MSG_BASE];
-        const bool hasMsg = msg.value[0] != '\0';
-        const uint8_t status = msgPopupStatus[fieldId - CRSF_FIELD_MSG_BASE].load();
-        payload[i++] = CRSF_PARAM_TYPE_COMMAND;
-        // Preview doubles as the field name; the Lua caches names, but we don't need them to change.
-        static const char empty[] = "-";
-        memcpy(&payload[i], hasMsg ? msg.value : empty, hasMsg ? strlen(msg.value) + 1 : sizeof(empty));
-        i += hasMsg ? strlen(msg.value) + 1 : sizeof(empty);
-        payload[i++] = status;
-        payload[i++] = CRSF_POPUP_TIMEOUT_10MS;
-        const char *info = (status == CRSF_LCS_ASK_CONFIRM) ? msg.full : "";
-        const size_t infoLen = strlen(info) + 1;
-        memcpy(&payload[i], info, infoLen);
-        i += infoLen;
+        payload[i++] = CRSF_LCS_IDLE;
+        payload[i++] = CRSF_CMD_TIMEOUT_10MS;
+        memcpy(&payload[i], info, sizeof(info));
+        i += sizeof(info);
+    } else if (inMsgRange && msgBlockOffset == 0) {
+        // Message folder: opening it is a pure Lua-local state change (fieldFolderOpen), no round trip needed.
+        const MeshMsgSnapshot &msg = snap.messages[msgIdx];
+        const char *label = msg.label[0] ? msg.label : "-";
+        payload[i++] = CRSF_PARAM_TYPE_FOLDER;
+        memcpy(&payload[i], label, strlen(label) + 1);
+        i += strlen(label) + 1;
+        for (uint8_t r = 1; r <= CRSF_MSG_ROW_COUNT; r++)
+            payload[i++] = msgFolderId + r;
+        payload[i++] = 0xFF;
+    } else if (inMsgRange) {
+        // Row 1..10 = word-wrapped message lines; hidden (type|0x80) when the message has no such line.
+        // The row's NAME (not value) carries the text so it spans the full line width (see fieldStringDisplay).
+        const char *line = snap.messages[msgIdx].lines[msgBlockOffset - 1];
+        payload[i++] = CRSF_PARAM_TYPE_INFO | (line[0] == '\0' ? 0x80 : 0);
+        appendInfoField(payload, i, line, "");
     } else if (fieldId == CRSF_FIELD_NODES_FOLDER) {
         payload[i++] = CRSF_PARAM_TYPE_FOLDER;
         static const char fieldName[] = "Nodes";
         memcpy(&payload[i], fieldName, sizeof(fieldName));
         i += sizeof(fieldName);
         // Child id list terminated by 0xFF, matching ELRS's own folder encoding (Lua ignores it for us).
+        payload[i++] = CRSF_FIELD_NODES_REFRESH;
         for (uint8_t n = 0; n < snap.nodeCount; n++)
             payload[i++] = CRSF_FIELD_NODES_BASE + CRSF_FIELD_NODE_BLOCK_SIZE * n;
         payload[i++] = 0xFF;
@@ -411,57 +472,38 @@ void CrsfHandsetModule::handleFrame(const uint8_t *frame, uint8_t len)
     } else if (type == CRSF_FRAMETYPE_PARAMETER_WRITE && destAddr == CRSF_ADDRESS_CRSF_TRANSMITTER && len >= 8) {
         const uint8_t fieldId = frame[5];
         const uint8_t value = frame[6];
-        const MeshSnapshot &snap = meshSnapshots[meshSnapshotIdx.load()];
-        if (fieldId == CRSF_FIELD_REFRESH) {
-            // Any write (the Lua's 2-option SELECT save): flip parity and push Device Info unsolicited so
-            // the Lua reallocates and re-reads every field, rather than waiting for the next ping.
-            fieldGen++;
-            sendDeviceInfo(origAddr);
-        } else if (fieldId == CRSF_FIELD_HELLO) {
-            if (value == CRSF_LCS_CLICK && helloStatus.load() == CRSF_LCS_IDLE) {
-                if (Throttle::isWithinTimespanMs(lastHelloReqMs.load(), CRSF_HELLO_COOLDOWN_MS)) {
-                    helloInfo = "Wait"; // stays idle so Lua's popup shows "Wait Stopped!" and closes
+        if (isRefreshField(fieldId)) {
+            // Reply first (always idle) so the Lua's popup closes; only a click then bumps parity and
+            // pushes Device Info unsolicited, so the Lua reallocates and re-reads every field.
+            sendParameterEntry(origAddr, fieldId, 0);
+            if (value == CRSF_LCS_CLICK) {
+                fieldGen++;
+                sendDeviceInfo(origAddr);
+            }
+        } else if (fieldId == CRSF_FIELD_MESSAGE_SELECT) {
+            const MeshSnapshot &snap = meshSnapshots[meshSnapshotIdx.load()];
+            const uint8_t maxIdx = snap.msgOptionCount > 0 ? snap.msgOptionCount - 1 : 0;
+            msgSelectIndex = std::min(value, maxIdx);
+        } else if (fieldId == CRSF_FIELD_SEND) {
+            if (value == CRSF_LCS_CLICK && sendStatus.load() == CRSF_LCS_IDLE) {
+                if (Throttle::isWithinTimespanMs(lastSendReqMs.load(), CRSF_SEND_COOLDOWN_MS)) {
+                    sendInfo = "Wait"; // stays idle so Lua's popup shows "Wait Stopped!" and closes
                 } else {
-                    lastHelloReqMs = millis();
-                    helloInfo = "Sending...";
-                    helloStatus = CRSF_LCS_EXECUTING;
-                    helloRequested = true;
+                    lastSendReqMs = millis();
+                    sendInfo = "Sending...";
+                    sendStatus = CRSF_LCS_EXECUTING;
+                    sendRequested = true;
                 }
             } else if (value == CRSF_LCS_CANCEL) {
-                helloStatus = CRSF_LCS_IDLE;
-                helloInfo = "";
+                sendStatus = CRSF_LCS_IDLE;
+                sendInfo = "";
             }
             // CRSF_LCS_QUERY (and anything else) just falls through to report current state below.
             sendParameterEntry(origAddr, fieldId, 0);
-        } else if (fieldId >= CRSF_FIELD_MSG_BASE && fieldId < CRSF_FIELD_MSG_BASE + MESH_MSG_SLOTS) {
-            const uint8_t idx = fieldId - CRSF_FIELD_MSG_BASE;
-            const bool hasMsg = snap.messages[idx].value[0] != '\0';
-            if (value == CRSF_LCS_CLICK)
-                msgPopupStatus[idx] = hasMsg ? CRSF_LCS_ASK_CONFIRM : CRSF_LCS_IDLE;
-            else if (value == CRSF_LCS_CONFIRMED || value == CRSF_LCS_CANCEL)
-                msgPopupStatus[idx] = CRSF_LCS_IDLE;
-            replyPopup(origAddr, fieldId, value, msgPopupStatus[idx].load() == CRSF_LCS_ASK_CONFIRM);
         }
+        // Message and node folders/rows never get a PARAMETER_WRITE: opening a folder is a pure
+        // Lua-local state change (fieldFolderOpen), and rows aren't editable.
     }
-}
-
-// While a popup is open the Lua never sends 0x2C chunk reads, only 0x2D queries — so each query gets
-// the next chunk, served from a copy frozen at click time (node details are rebuilt every second).
-void CrsfHandsetModule::replyPopup(uint8_t destAddr, uint8_t fieldId, uint8_t value, bool open)
-{
-    if (open && value == CRSF_LCS_CLICK) {
-        popupBodyLen = buildParameterEntryBody(fieldId);
-        memcpy(popupBody, entryBody, popupBodyLen);
-        popupFieldId = fieldId;
-        popupChunk = 0;
-    } else if (open && value == CRSF_LCS_QUERY && popupFieldId == fieldId) {
-        popupChunk++;
-    } else {
-        popupFieldId = 0;
-        sendParameterEntry(destAddr, fieldId, 0);
-        return;
-    }
-    sendEntryChunk(destAddr, fieldId, popupBody, popupBodyLen, popupChunk);
 }
 
 // UART event task only (2KB stack): no logging here.
@@ -510,28 +552,31 @@ void CrsfHandsetModule::onUartError(int error)
     crsfHandsetStats.uartErrors++;
 }
 
-// Mesh sends only happen here (main thread); handleFrame() just flips the atomic request flag.
-void CrsfHandsetModule::sendHello()
+// Mesh sends only happen here (main thread); handleFrame() just flips the atomic request flag. Reads
+// mainMsgTexts (main-thread-only) rather than the double-buffered snapshot, so it can't race its flip.
+void CrsfHandsetModule::sendSelectedMessage()
 {
-    static const char helloText[] = "Hi from ExpressLRS!";
+    const uint8_t maxIdx = mainMsgTextCount > 0 ? mainMsgTextCount - 1 : 0;
+    const uint8_t idx = std::min<uint8_t>(msgSelectIndex.load(), maxIdx);
+    const char *text = mainMsgTextCount > 0 ? mainMsgTexts[idx] : "";
     meshtastic_MeshPacket *p = router->allocForSending();
     if (p) {
         p->to = NODENUM_BROADCAST;
         p->channel = 0;
         p->decoded.portnum = meshtastic_PortNum_TEXT_MESSAGE_APP;
-        p->decoded.payload.size = strlen(helloText);
-        memcpy(p->decoded.payload.bytes, helloText, p->decoded.payload.size);
+        p->decoded.payload.size = strlen(text);
+        memcpy(p->decoded.payload.bytes, text, p->decoded.payload.size);
         service->sendToMesh(p, RX_SRC_LOCAL, true);
         crsfHandsetStats.helloSent++;
-        helloInfo = "Sent";
+        sendInfo = "Sent";
     } else {
-        helloInfo = "Failed";
+        sendInfo = "Failed";
     }
-    helloStatus = CRSF_LCS_IDLE;
+    sendStatus = CRSF_LCS_IDLE;
 }
 
 // TextMessageModule notifies synchronously from packet handling, on the main thread, so this can write
-// textMsgRing directly (see header comment); excludes our own sendHello() broadcasts.
+// textMsgRing directly (see header comment); excludes our own sendSelectedMessage() broadcasts.
 static void shortNameOf(NodeNum num, char *out, size_t outLen)
 {
     const meshtastic_NodeInfoLite *ni = nodeDB->getMeshNode(num);
@@ -539,6 +584,77 @@ static void shortNameOf(NodeNum num, char *out, size_t outLen)
         snprintf(out, outLen, "%s", ni->user.short_name);
     else
         snprintf(out, outLen, "%04x", (unsigned)(num & 0xFFFF));
+}
+
+// Truncates combined ("sender: text") to <=labelLen-1 chars, ending in "..." if it didn't fit.
+static void buildMsgLabel(char *label, size_t labelLen, const char *combined)
+{
+    const size_t maxChars = labelLen - 1;
+    const int written = snprintf(label, labelLen, "%s", combined);
+    if (written < 0)
+        return;
+    if ((size_t)written > maxChars) {
+        const size_t cut = maxChars - 3; // room for "..."
+        label[cut] = '\0';
+        strcat(label, "...");
+    }
+}
+
+// Greedy word-wrap of `text` into up to maxLines rows of <=21 chars (lines[][22]); breaks at spaces,
+// hard-breaks words longer than a line, and ends the last line with "..." if text didn't all fit.
+static void wrapMessageLines(char lines[][22], uint8_t maxLines, const char *text)
+{
+    constexpr size_t kMaxChars = 22 - 1;
+    for (uint8_t j = 0; j < maxLines; j++)
+        lines[j][0] = '\0';
+    if (maxLines == 0)
+        return;
+
+    uint8_t line = 0;
+    size_t col = 0;
+    size_t pos = 0;
+    const size_t textLen = strlen(text);
+    bool stop = false;
+
+    while (pos < textLen && !stop) {
+        const size_t wordStart = pos;
+        while (pos < textLen && text[pos] != ' ')
+            pos++;
+        const size_t wordLen = pos - wordStart;
+        while (pos < textLen && text[pos] == ' ')
+            pos++; // collapse runs of spaces into the single separator we add ourselves
+
+        size_t wordOff = 0;
+        while (wordOff < wordLen && !stop) {
+            // A fresh word that can't fit (with its separating space) on the current line wraps first;
+            // a word already in progress (wordOff>0, from a prior hard-break) just fills to the margin.
+            if ((wordOff == 0 && col > 0 && col + 1 + std::min(wordLen, kMaxChars) > kMaxChars) || col == kMaxChars) {
+                line++;
+                col = 0;
+                if (line >= maxLines) {
+                    stop = true;
+                    break;
+                }
+            }
+            if (col > 0 && wordOff == 0)
+                lines[line][col++] = ' ';
+            const size_t avail = kMaxChars - col;
+            const size_t take = std::min(avail, wordLen - wordOff);
+            memcpy(&lines[line][col], text + wordStart + wordOff, take);
+            col += take;
+            wordOff += take;
+            lines[line][col] = '\0';
+        }
+    }
+
+    if (stop || pos < textLen) {
+        const uint8_t last = maxLines - 1;
+        size_t len = strlen(lines[last]);
+        if (len > kMaxChars - 3)
+            len = kMaxChars - 3;
+        lines[last][len] = '\0';
+        strcat(lines[last], "...");
+    }
 }
 
 int CrsfHandsetModule::onTextMessageReceived(const meshtastic_MeshPacket *mp)
@@ -552,19 +668,19 @@ int CrsfHandsetModule::onTextMessageReceived(const meshtastic_MeshPacket *mp)
 
     char sender[8];
     shortNameOf(mp->from, sender, sizeof(sender));
-    const int prefix = snprintf(entry.value, sizeof(entry.value), "%s: ", sender);
-    size_t n = mp->decoded.payload.size;
-    if (n > sizeof(entry.value) - 1 - prefix)
-        n = sizeof(entry.value) - 1 - prefix;
-    memcpy(entry.value + prefix, mp->decoded.payload.bytes, n);
-    entry.value[prefix + n] = '\0';
 
-    const int fullPrefix = snprintf(entry.full, sizeof(entry.full), "%s: ", sender);
-    n = mp->decoded.payload.size;
-    if (n > sizeof(entry.full) - 1 - fullPrefix)
-        n = sizeof(entry.full) - 1 - fullPrefix;
-    memcpy(entry.full + fullPrefix, mp->decoded.payload.bytes, n);
-    entry.full[fullPrefix + n] = '\0';
+    char textBuf[201];
+    size_t n = mp->decoded.payload.size;
+    if (n > sizeof(textBuf) - 1)
+        n = sizeof(textBuf) - 1;
+    memcpy(textBuf, mp->decoded.payload.bytes, n);
+    textBuf[n] = '\0';
+
+    char combined[216];
+    snprintf(combined, sizeof(combined), "%s: %s", sender, textBuf);
+
+    buildMsgLabel(entry.label, sizeof(entry.label), combined);
+    wrapMessageLines(entry.lines, MESH_MSG_ROW_COUNT, combined);
 
     if (textMsgCount < MESH_MSG_SLOTS)
         textMsgCount++;
@@ -621,12 +737,60 @@ static void buildNodeRows(char *rowName, size_t rowNameLen, char *rowId, size_t 
     }
 }
 
+// Rebuilds mainMsgTexts/mainMsgTextCount (main-thread-owned) from the fixed first option plus the
+// '|'-split canned messages, then publishes the same data into snap as a ';'-joined options string.
+void CrsfHandsetModule::buildCannedMessageOptions(MeshSnapshot &snap)
+{
+    static const char kFirstOption[] = "Hi from ExpressLRS!";
+    mainMsgTextCount = 0;
+    snprintf(mainMsgTexts[mainMsgTextCount++], MSG_OPTION_TEXT_LEN, "%s", kFirstOption);
+
+    const char *p = cannedMessagesRaw();
+    while (*p && mainMsgTextCount < MSG_OPTION_MAX_COUNT) {
+        const char *sep = strchr(p, '|');
+        const size_t len = sep ? (size_t)(sep - p) : strlen(p);
+        if (len > 0) {
+            char *dst = mainMsgTexts[mainMsgTextCount];
+            const size_t n = std::min(len, MSG_OPTION_TEXT_LEN - 1);
+            memcpy(dst, p, n);
+            dst[n] = '\0';
+            for (char *c = dst; *c; c++) // ';' is the CRSF option separator, so it can't appear in an option
+                if (*c == ';')
+                    *c = ',';
+            mainMsgTextCount++;
+        }
+        if (!sep)
+            break;
+        p = sep + 1;
+    }
+
+    snap.msgOptionsStr[0] = '\0';
+    size_t used = 0;
+    uint8_t count = 0;
+    for (uint8_t j = 0; j < mainMsgTextCount; j++) {
+        const size_t entryLen = strlen(mainMsgTexts[j]);
+        const size_t needed = entryLen + (count > 0 ? 1 : 0); // +1 for the ';' separator
+        if (used + needed >= MSG_OPTIONS_STR_LEN - 1) // stop rather than truncate mid-option
+            break;
+        if (count > 0)
+            snap.msgOptionsStr[used++] = ';';
+        memcpy(&snap.msgOptionsStr[used], mainMsgTexts[j], entryLen);
+        used += entryLen;
+        snap.msgOptionsStr[used] = '\0';
+        snprintf(snap.msgOptionTexts[j], MSG_OPTION_TEXT_LEN, "%s", mainMsgTexts[j]);
+        count++;
+    }
+    snap.msgOptionCount = count;
+}
+
 // Builds the inactive snapshot buffer from NodeDB/devicestate, then flips the reader's index.
 // Main thread only: NodeDB access and mesh state are not safe from the UART event task.
 void CrsfHandsetModule::updateMeshSnapshot()
 {
     const uint8_t writeIdx = 1 - meshSnapshotIdx.load();
     MeshSnapshot &snap = meshSnapshots[writeIdx];
+
+    buildCannedMessageOptions(snap);
 
     // textMsgRing is main-thread-owned (see header); a plain copy is enough to publish it to the UART task.
     for (uint8_t j = 0; j < MESH_MSG_SLOTS; j++)
@@ -687,8 +851,8 @@ int32_t CrsfHandsetModule::runOnce()
 {
     updateMeshSnapshot();
 
-    if (helloRequested.exchange(false))
-        sendHello();
+    if (sendRequested.exchange(false))
+        sendSelectedMessage();
 
     if (crsfHandsetStats.pingsRx != pingsLogged) {
         pingsLogged = crsfHandsetStats.pingsRx;

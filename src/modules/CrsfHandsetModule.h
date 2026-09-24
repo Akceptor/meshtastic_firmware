@@ -30,8 +30,7 @@ class CrsfHandsetModule : private concurrency::OSThread
     uint8_t buildParameterEntryBody(uint8_t fieldId);
     void sendParameterEntry(uint8_t destAddr, uint8_t fieldId, uint8_t chunkIndex);
     void sendEntryChunk(uint8_t destAddr, uint8_t fieldId, const uint8_t *body, uint8_t bodyLen, uint8_t chunkIndex);
-    void replyPopup(uint8_t destAddr, uint8_t fieldId, uint8_t value, bool open);
-    void sendHello();
+    void sendSelectedMessage();
     void setDirection(bool transmit);
     void applyPolarityAndBaud();
     void updateMeshSnapshot();
@@ -47,11 +46,15 @@ class CrsfHandsetModule : private concurrency::OSThread
     uint32_t framesRxAtLastCheck = 0;
     uint32_t pingsLogged = 0;
 
-    // Say Hello COMMAND field: written from the UART event task, consumed on the OSThread.
-    std::atomic<bool> helloRequested{false};
-    std::atomic<uint8_t> helloStatus{0}; // CRSF lcs* status codes: 0 idle, 2 executing
-    std::atomic<const char *> helloInfo{""};
-    std::atomic<uint32_t> lastHelloReqMs{0};
+    // Send COMMAND field: written from the UART event task, consumed on the OSThread.
+    std::atomic<bool> sendRequested{false};
+    std::atomic<uint8_t> sendStatus{0}; // CRSF lcs* status codes: 0 idle, 2 executing
+    std::atomic<const char *> sendInfo{""};
+    std::atomic<uint32_t> lastSendReqMs{0};
+
+    // Message SELECT field: index into the canned-message option list, written from the UART event
+    // task; clamped to the current option count both on write and on read.
+    std::atomic<uint8_t> msgSelectIndex{0};
 
     // Entry payload assembled whole, then sliced into <=64B CRSF frames on request; UART task only,
     // so a member (not a uart_event_task stack local) is fine despite the size.
@@ -59,17 +62,17 @@ class CrsfHandsetModule : private concurrency::OSThread
     static constexpr uint8_t CRSF_ENTRY_CHUNK_MAX = 50;
     uint8_t entryBody[CRSF_ENTRY_BODY_MAX];
     uint8_t entryBodyLen = 0;
-    uint8_t popupBody[CRSF_ENTRY_BODY_MAX];
-    uint8_t popupBodyLen = 0;
-    uint8_t popupFieldId = 0;
-    uint8_t popupChunk = 0;
 
-    // Message popup state: written from the UART event task on PARAMETER_WRITE, read back into the
-    // COMMAND field's status/info on the next PARAMETER_READ/WRITE reply. Nodes are plain INFO rows now,
-    // no popup/confirm state needed for them.
+    // Messages and nodes are plain FOLDER/INFO rows (no popup/confirm state needed): opening a folder is
+    // a pure Lua-local state change (fieldFolderOpen), no round trip to the firmware.
     static constexpr uint8_t MESH_MAX_NODES = 10;
     static constexpr uint8_t MESH_MSG_SLOTS = 5;
-    std::atomic<uint8_t> msgPopupStatus[MESH_MSG_SLOTS];
+    static constexpr uint8_t MESH_MSG_ROW_COUNT = 10; // must match CRSF_MSG_ROW_COUNT in the .cpp (static_assert'd)
+
+    // Message SELECT option list: "Hi from ExpressLRS!" plus up to 11 '|'-split canned messages.
+    static constexpr uint8_t MSG_OPTION_MAX_COUNT = 12;
+    static constexpr size_t MSG_OPTION_TEXT_LEN = 48;   // per-option send/display text buffer
+    static constexpr size_t MSG_OPTIONS_STR_LEN = 208;  // ';'-joined options string, ~200 char budget + NUL
 
     // Toggled on the UART event task on every Device Ping and every Refresh write; flips a hidden
     // trailing field's presence so Device Info's fieldCnt changes, forcing the Lua to notice the
@@ -88,16 +91,25 @@ class CrsfHandsetModule : private concurrency::OSThread
         char rowBat[20] = "";  // "Bat" row, e.g. "87% 4.05V"; empty means hidden
     };
     struct MeshMsgSnapshot {
-        char value[24] = "";  // preview shown as the field name
-        char full[201] = "";  // full popup text; empty means "no message in this slot"
+        char label[24] = "";                          // preview shown as the message folder's name
+        char lines[MESH_MSG_ROW_COUNT][22] = {};       // word-wrapped rows (<=21 chars); empty means hidden row
     };
     struct MeshSnapshot {
         uint8_t nodeCount = 0;
         MeshNodeSnapshot nodes[MESH_MAX_NODES];
         MeshMsgSnapshot messages[MESH_MSG_SLOTS];
+        uint8_t msgOptionCount = 0;
+        char msgOptionsStr[MSG_OPTIONS_STR_LEN] = "";
+        char msgOptionTexts[MSG_OPTION_MAX_COUNT][MSG_OPTION_TEXT_LEN] = {};
     };
     MeshSnapshot meshSnapshots[2];
     std::atomic<uint8_t> meshSnapshotIdx{0};
+
+    // Main-thread-only copy of the canned-message texts, rebuilt every updateMeshSnapshot() call;
+    // sendSelectedMessage() reads from this (not the double-buffered snapshot) to avoid racing its flip.
+    char mainMsgTexts[MSG_OPTION_MAX_COUNT][MSG_OPTION_TEXT_LEN] = {};
+    uint8_t mainMsgTextCount = 0;
+    void buildCannedMessageOptions(MeshSnapshot &snap);
 
     // Ring of received texts, newest first; written by onTextMessageReceived, read by updateMeshSnapshot.
     // Both run on the main thread (TextMessageModule notifies observers synchronously from packet handling,
