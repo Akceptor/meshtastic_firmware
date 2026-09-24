@@ -216,60 +216,74 @@ flash without a manual reset**, which looks identical to a hang.
 ---
 
 
-## OPEN: CRSF Lua handset identification — not working on hardware
+## CRSF Lua handset identification — WORKING
 
 `CrsfHandsetModule` (`src/modules/CrsfHandsetModule.{h,cpp}`, `CRSF_UART_PIN 13` in
-`variant.h`) was added so the stock ExpressLRS Lua script on an EdgeTX handset can see
-"Meshtastic <version>" when this TX module is plugged into the JR bay. **It does not work
-yet** — on real hardware the link never receives a single byte.
+`variant.h`) answers the stock ExpressLRS Lua script on an EdgeTX handset so it shows
+"Meshtastic <version>" when this TX module sits in the JR bay. Hardware/wiring is fine — the
+same module works with ExpressLRS firmware. **Verified on hardware:** Lua shows
+"Meshtastic 2.7.26…" with a "Version" line.
 
-**Diagnostic in place:** System > CRSF Status menu (commit `d043c102f`) shows live counters
-(RX bytes / frames / bad CRC / pings / replies sent) — check it live from the device menu
-while plugged into the bay, since USB can't be attached at the same time as the bay
-connector.
+**Diagnostics:** System screen → press OK → CRSF Status. Snapshot on open (reopen to
+refresh). 4 lines: `RX E F B` (bytes, uart errors, good frames, bad CRC) / `Ping Sent Par`
+(pings, Device Info replies, parameter reads) / `<baud> INV|NRM <rst now>`<`<rst prev>` /
+last 8 raw bytes hex. Reset reason is persisted in NVS (`crsfdiag/rst`) so a crash in the bay
+(no USB log possible) is readable on the next boot. Codes: PWR, EXT, SW, PANIC, IWDT, TWDT,
+BOD (brownout), DSLP.
 
-**Confirmed so far:**
-- Module constructs and starts fine — boot log shows
-  `CrsfHandset: listening on GPIO13 @ 400000 baud`.
-- EdgeTX external RF module slot confirmed set to protocol "Crossfire" (so the radio should
-  be driving CRSF onto the bay pin).
-- With module plugged into the bay and Lua script running: **all counters read 0** — no
-  bytes at all reach the UART. Not a parsing/protocol bug, something upstream of that.
-- Fixed (real bug, keep): sync-byte check only accepted `0xC8`. Per ExpressLRS's own
-  `CRSFHandset::alignBufferToSync()` (`ExpressLRS/src/lib/Handset/CRSFHandset.cpp:222`),
-  frames addressed to an external module also legitimately start with `0xEE`
-  (`CRSF_ADDRESS_CRSF_TRANSMITTER`). Now accepts both. Did not fix the all-zero symptom by
-  itself, but is a genuine correctness fix worth keeping regardless.
-- **Tried and reverted:** replaced `uart_set_mode(UART_MODE_RS485_HALF_DUPLEX)` with manual
-  GPIO direction switching (tri-state via `gpio_set_direction()` between RX/TX), mirroring
-  ExpressLRS's own `CRSFHandset::duplex_set_RX()/duplex_set_TX()` (classic ESP32 has no
-  DE/RE pin, so their driver never trusts `UART_MODE_RS485_HALF_DUPLEX` alone — see
-  `ExpressLRS/src/lib/Handset/CRSFHandset.cpp:364-410`). Theory: our TX driver stays
-  permanently enabled and fights the handset's own driver on the shared wire. **Made things
-  worse — device hung at the boot splash and never got past the Meshtastic logo while
-  plugged into the bay.** Reverted back to `uart_set_mode(RS485_HALF_DUPLEX)` in commit
-  `d043c102f`. Root cause of *that* regression was never isolated (didn't get to test
-  whether it also hung standalone over USB, only tested plugged into the bay).
+**Root causes found and fixed (verified on hardware unless noted):**
+1. **Our TX held the wire.** `begin()` with rx==tx pin attaches UART1 TX push-pull to GPIO13
+   permanently; `uart_set_mode(UART_MODE_RS485_HALF_DUPLEX)` only toggles RTS on ESP32, it
+   never tri-states TX. Handset could not drive the line → 0 bytes. Fix: manual direction
+   switching via GPIO matrix, mirroring ELRS `CRSFHandset::duplex_set_RX/TX`
+   (`ExpressLRS/src/lib/Handset/CRSFHandset.cpp:364-410`) but with UART1 signals
+   (`U1RXD_IN_IDX`/`U1TXD_OUT_IDX`). While transmitting, RX is fed
+   `GPIO_MATRIX_CONST_ONE_INPUT` (idle) instead of ELRS's const-zero, to avoid a break.
+2. **Polarity:** JR-bay half-duplex CRSF is **inverted** (matrix inversion + pulldown in RX).
+   Locks at **400000 baud, INV** with EdgeTX set to 400k.
+3. **Polarity/baud watchdog:** `runOnce()` every 1s — if no new good frames, flip polarity,
+   and on each flip back to INV step through ELRS's `TxToHandsetBauds` list. Needed in
+   practice: the constructor-only 400k/INV setup received bytes but never parsed a frame;
+   the watchdog's later re-apply locked immediately. **Unexplained** — suspect something
+   re-configures GPIO13/UART1 after our constructor; not investigated.
+4. **Boot hang at splash in the bay** (also the cause of the earlier reverted GPIO attempt):
+   per-frame `LOG_DEBUG` at ~250 frames/s saturated the 115200 console and blocked boot.
+   Fix: no per-frame logging; counters only.
+5. **Reply latency:** parsing moved from 5 ms OSThread polling to
+   `Serial1.onReceive(cb, true)` + `setRxTimeout(2)` so replies land inside the CRSF period.
+6. **PANIC reboots** (reset code PANIC captured via NVS) when pings arrived: the onReceive
+   callback runs on arduino-esp32's `uart_event_task` with a **2048-byte stack**
+   (`HardwareSerial.cpp:111`), and `LOG_INFO` from the reply path overflows it. Fix: no
+   logging in the callback (runOnce logs ping counts), plus
+   `-DARDUINO_SERIAL_EVENT_TASK_STACK_SIZE=4096` in the emax `platformio.ini`.
+   No PANIC seen since, but no long soak yet.
+7. **Lua shows no text although ping/reply works** (Ping 2 / Sent 2 — the script stops
+   pinging once its device list is non-empty, so it did accept Device Info). Cause in
+   `ExpressLRS/src/lua/elrs.lua:27,385`: `fields_count` starts at 0 and `changeDeviceId()`
+   returns early when `fldcnt` equals it, so `deviceName` is never set. Fix: advertise
+   `fieldCnt=1` and answer PARAMETER_READ (0x2C) for field 1 with PARAMETER_ENTRY (0x2B), an
+   INFO (type 12) field "Version" = `APP_VERSION`. Frames now built by shared `sendFrame()`.
+   Verified: Ping 1 / Sent 1 / Par 1, name + Version displayed.
 
-**Also observed, unexplained:** at one point (still on the `uart_set_mode` build, before the
-GPIO revert), exiting the ExpressLRS Lua script caused the TX module itself to reboot. Not
-re-confirmed since; worth checking again once the link is working, since it may point to a
-brownout from electrical contention on the shared pin — consistent with the driver-fighting
-theory above, just not yet proven.
+**Side finding — dark screen + LED off + joystick dead:** on this board a 3 s long-press of OK
+(5-way ADC ≈0) calls `shutdown()` → deep sleep with no ADC wake
+(`src/input/ExpressLRSFiveWay.cpp:186`). One early bay failure looked exactly like that, but a
+diagnostic build suppressing it never saw it fire; reverted. Suspect it if the symptom returns.
 
-**Next steps, not yet tried:**
-- Multimeter/scope on GPIO13 (or the bay connector's data pin) while the handset is powered
-  with Crossfire selected, to confirm the handset is actually driving *something* on that
-  wire electrically, independent of firmware. If it's flat, the fault is wiring/connector,
-  not code.
-- Continuity check: GPIO13 pad on the ESP32 to the JR-bay connector's signal pin, to rule
-  out a bad trace/solder joint on this specific board.
-- If electrical contention is confirmed as the real cause, the fix is still the manual
-  direction-switching approach — but the boot hang needs debugging first (add the debug
-  build without plugging into the bay, confirm standalone-over-USB boot is clean, then
-  retest plugged in).
-- Not yet considered: baud/level mismatch (5V vs 3.3V logic) between the handset's bay
-  output and the ESP32 pad.
+**Also unexplained:** the 7-line CRSF Status banner (more than `MAX_LINES = 5` in
+`NotificationRenderer.h`) coincided with reboots; trimmed to 4 lines. Code review found no
+overflow, so this may just have been the ping-path PANIC above.
+
+**Bench gotchas:**
+- Opening the CP2102 serial port on macOS (pyserial, even with dtr/rts=False) **resets the
+  ESP32** via EN. Open the logger first, then do the on-device steps.
+- USB and JR bay can't be attached at once, so bay behaviour is only observable via the
+  CRSF Status screen / persisted reset reason.
+
+**Open items:**
+- Long soak in the bay with Lua open to confirm the PANIC is gone for good.
+- Find what undoes the constructor's GPIO13/UART1 setup (root cause 3); the watchdog masks it.
+- `trunk fmt` not run (trunk not installed on this machine) — run before upstreaming.
 
 ---
 
