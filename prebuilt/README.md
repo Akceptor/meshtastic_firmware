@@ -4,6 +4,32 @@ Binaries built from this branch. The suffix records any non-default build flags.
 
 ## Contents
 
+### 2.7.26.77fec45 — ESP32 LR1121 RX
+
+| File | Board | Notes |
+|---|---|---|
+| `firmware-unified_esp32_lr1121_rx-2.7.26.77fec45.factory.bin` | ExpressLRS `UNIFIED_ESP32_LR1121_RX` | Standalone Meshtastic. Full image incl. bootloader + partitions. Flash to offset `0x0`. **Overwrites ExpressLRS / ElrsDual bootloader.** |
+| `firmware-unified_esp32_lr1121_rx-2.7.26.77fec45.ota.bin` | ExpressLRS `UNIFIED_ESP32_LR1121_RX` | App only. Flash to a slot offset (`0x10000` or `0x1F0000`) to sit alongside ExpressLRS, or use OTA. |
+
+ESP32 sibling of the C3 RX below: same LR1121 radio, same partition layout, same
+transceiver-firmware patch, same **22 dBm max / avoid 1-14 dBm** TX power rule. Stock sync
+word `0x2b`. Verified on an ESP32-PICO-D4 board: `LR1121 init success` (device `0xF3`,
+FW 1.4). App image is 1.84MB against a 1.875MB slot (~125KB headroom).
+
+Pins: radio SCK 25 / MISO 33 / MOSI 32 / NSS 27 / RST 26 / BUSY 36 / DIO1 37, NeoPixel
+GPIO22, button GPIO0 (also the boot strap — holding it at power-on enters download mode).
+
+```
+esptool.py --chip esp32 --port /dev/cu.usbserial-0001 --baud 460800 \
+  write_flash 0x0 firmware-unified_esp32_lr1121_rx-2.7.26.77fec45.factory.bin
+```
+
+Built with:
+
+```
+pio run -e unified_esp32_lr1121_rx
+```
+
 ### 2.7.26.9f12caf (current)
 
 | File | Board | Notes |
