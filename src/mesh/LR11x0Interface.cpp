@@ -51,6 +51,40 @@ static void updateFanState(int8_t requestedPowerDbm)
 }
 #endif
 
+// External-PA boards (e.g. radiomaster_tx15_internal) drive an ELRS-style DAC gain stage ahead of
+// the LR1121 LP PA; the LR1121's own output tracks a fixed ELRS DAC/drive table, not a linear curve.
+#ifdef LR11X0_PA_DAC_PIN
+#ifndef LR11X0_PA_MAX_EIRP_DBM
+#define LR11X0_PA_MAX_EIRP_DBM 20
+#endif
+struct Lr11x0PaPoint {
+    int8_t eirp;
+    uint8_t dac;
+    int8_t lrDbm;
+};
+static const Lr11x0PaPoint lr11x0PaTable[] = {LR11X0_PA_TABLE};
+static const Lr11x0PaPoint lr11x0PaTableHf[] = {LR11X0_PA_TABLE_HF};
+// Never interpolate DAC: its polarity/effect is unverified, only drive is scaled within a constant-DAC span.
+static Lr11x0PaPoint lr11x0PaFor(int8_t eirp, bool hf)
+{
+    const Lr11x0PaPoint *t = hf ? lr11x0PaTableHf : lr11x0PaTable;
+    const size_t n = (hf ? sizeof(lr11x0PaTableHf) : sizeof(lr11x0PaTable)) / sizeof(Lr11x0PaPoint);
+    if (eirp > LR11X0_PA_MAX_EIRP_DBM)
+        eirp = LR11X0_PA_MAX_EIRP_DBM;
+    if (eirp < t[0].eirp) {
+        int lr = t[0].lrDbm - (t[0].eirp - eirp);
+        return {eirp, t[0].dac, (int8_t)(lr < -17 ? -17 : lr)};
+    }
+    size_t i = 0;
+    while (i + 1 < n && t[i + 1].eirp <= eirp)
+        i++;
+    int lr = t[i].lrDbm;
+    if (i + 1 < n && t[i + 1].dac == t[i].dac)
+        lr += (eirp - t[i].eirp) * (t[i + 1].lrDbm - t[i].lrDbm) / (t[i + 1].eirp - t[i].eirp);
+    return {eirp, t[i].dac, (int8_t)lr};
+}
+#endif
+
 template <typename T>
 LR11x0Interface<T>::LR11x0Interface(LockingArduinoHal *hal, RADIOLIB_PIN_TYPE cs, RADIOLIB_PIN_TYPE irq, RADIOLIB_PIN_TYPE rst,
                                     RADIOLIB_PIN_TYPE busy, bool isSecondary, float fixedFreqOverride_)
@@ -86,6 +120,10 @@ template <typename T> bool LR11x0Interface<T>::init()
 
     RadioLibInterface::init();
 
+#ifdef LR11X0_PA_DAC_PIN
+    int8_t requestedEirp = power;
+#endif
+
     limitPower(LR1110_MAX_POWER);
 
     if ((power > LR1120_MAX_POWER) &&
@@ -93,6 +131,13 @@ template <typename T> bool LR11x0Interface<T>::init()
         power = LR1120_MAX_POWER;
         preambleLength = 12; // 12 is the default for operation above 2GHz
     }
+
+#ifdef LR11X0_PA_DAC_PIN
+    Lr11x0PaPoint pa = lr11x0PaFor(requestedEirp, getFreq() > 1000.0f);
+    power = pa.lrDbm;
+    dacWrite(LR11X0_PA_DAC_PIN, pa.dac);
+    LOG_INFO("External PA: requested %d dBm EIRP -> %d dBm EIRP, DAC %d, LR1121 %d dBm", requestedEirp, pa.eirp, pa.dac, pa.lrDbm);
+#endif
 
 #ifdef LR11X0_RF_SWITCH_SUBGHZ
     pinMode(LR11X0_RF_SWITCH_SUBGHZ, OUTPUT);
@@ -137,7 +182,11 @@ template <typename T> bool LR11x0Interface<T>::init()
 
 #ifdef RF95_FAN_EN
     pinMode(RF95_FAN_EN, OUTPUT);
+#ifdef LR11X0_PA_DAC_PIN
+    updateFanState(pa.eirp); // power is drive (-14..10) here, not EIRP, and would never trip the fan
+#else
     updateFanState(power);
+#endif
 #endif
 
     if (res == RADIOLIB_ERR_NONE)
@@ -146,6 +195,13 @@ template <typename T> bool LR11x0Interface<T>::init()
     // FIXME: May want to set depending on a definition, currently all LR1110 variant files use the DC-DC regulator option
     if (res == RADIOLIB_ERR_NONE)
         res = lora.setRegulatorDCDC();
+
+#ifdef LR11X0_PA_DAC_PIN
+    // Re-apply ELRS's exact LP PA config (duty/ramp differ from RadioLib's LR1120::setOutputPower default).
+    if (res == RADIOLIB_ERR_NONE && getFreq() < 1000.0f)
+        res = lora.LR11x0::setOutputPower(pa.lrDbm, RADIOLIB_LR11X0_PA_SEL_LP, RADIOLIB_LR11X0_PA_SUPPLY_INTERNAL, 0x07, 0x00,
+                                           RADIOLIB_LRXXXX_PA_RAMP_48U - 0x03);
+#endif
 
 #ifdef LR11X0_DIO_AS_RF_SWITCH
     bool dioAsRfSwitch = true;
@@ -180,6 +236,10 @@ template <typename T> bool LR11x0Interface<T>::reconfigure()
 {
     RadioLibInterface::reconfigure();
 
+#ifdef LR11X0_PA_DAC_PIN
+    int8_t requestedEirp = power;
+#endif
+
     // set mode to standby
     setStandby();
 
@@ -206,6 +266,25 @@ template <typename T> bool LR11x0Interface<T>::reconfigure()
     if (err != RADIOLIB_ERR_NONE)
         RECORD_CRITICALERROR(meshtastic_CriticalErrorCode_INVALID_RADIO_SETTING);
 
+#ifdef LR11X0_PA_DAC_PIN
+    Lr11x0PaPoint pa = lr11x0PaFor(requestedEirp, getFreq() > 1000.0f);
+    power = pa.lrDbm;
+    dacWrite(LR11X0_PA_DAC_PIN, pa.dac);
+    LOG_INFO("External PA: requested %d dBm EIRP -> %d dBm EIRP, DAC %d, LR1121 %d dBm", requestedEirp, pa.eirp, pa.dac, pa.lrDbm);
+
+    err = lora.setOutputPower(power);
+    assert(err == RADIOLIB_ERR_NONE);
+    // Re-apply ELRS's exact LP PA config (duty/ramp differ from RadioLib's LR1120::setOutputPower default).
+    if (getFreq() < 1000.0f) {
+        err = lora.LR11x0::setOutputPower(pa.lrDbm, RADIOLIB_LR11X0_PA_SEL_LP, RADIOLIB_LR11X0_PA_SUPPLY_INTERNAL, 0x07, 0x00,
+                                           RADIOLIB_LRXXXX_PA_RAMP_48U - 0x03);
+        assert(err == RADIOLIB_ERR_NONE);
+    }
+
+#ifdef RF95_FAN_EN
+    updateFanState(pa.eirp); // power is drive (-14..10) here, not EIRP, and would never trip the fan
+#endif
+#else
     if (power > LR1110_MAX_POWER) // This chip has lower power limits than some
         power = LR1110_MAX_POWER;
     if ((power > LR1120_MAX_POWER) && (config.lora.region == meshtastic_Config_LoRaConfig_RegionCode_LORA_24)) // 2.4G power limit
@@ -216,6 +295,7 @@ template <typename T> bool LR11x0Interface<T>::reconfigure()
 
 #ifdef RF95_FAN_EN
     updateFanState(power);
+#endif
 #endif
 
     startReceive(); // restart receiving
