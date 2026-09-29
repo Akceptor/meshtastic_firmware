@@ -37,8 +37,9 @@ word/PA fan. Also fixed a latent link error: `fanMode` only exists with `USE_RF9
 `docs/radiomaster-tx15-internal-spec.md` (Opus plan from ELRS sources): ESP32 + LR1121 on its
 LP PA into an external PA with a DAC on GPIO26; generic `LR11X0_PA_DAC_PIN` hook in
 `LR11x0Interface.cpp` maps EIRP onto ELRS's exact (DAC, dBm) pairs. **Capped at 20 dBm / LR1121
-+10 dBm until measured on a power meter.** No Lua menu yet (step 2 needs full-duplex UART0 and
-the console moved off UART0). **Not hardware-tested.** Never use Meshtastic in-app OTA on it
++10 dBm until measured on a power meter.** Step 2 (`1459498`): ELRS Lua menu over full-duplex
+CRSF on UART0 (GPIO3/1); console moved to Serial2 on the backpack pins GPIO18/5. **Not
+hardware-tested.** Never use Meshtastic in-app OTA on it
 (writes ELRS's slot).
 
 **5. Prebuilt + web flasher.** `/prebuilt` has one build per board per sync word: emax
@@ -60,7 +61,7 @@ never uses it — it writes the `.ota.bin` to the chosen slot plus its own bundl
 partition table and boot_app0 (`tools/dual-ota-flasher/flasher.js:241-248`).
 
 **Open items:** bayck + TX15 hardware tests; TX15 power measurement then raise
-`LR11X0_PA_MAX_EIRP_DBM`; TX15 step 2 (Lua menu); 
+`LR11X0_PA_MAX_EIRP_DBM`; 
 `trunk fmt` never run (not installed here); pre-existing `getFreq() < 1e9` comparisons in
 `LR11x0Interface.cpp` (lines ~144-151, MHz vs Hz) are always true — harmless on sub-GHz, wrong
 for 2.4 GHz; ElrsDual's SSH key (`~/.ssh/akceptor_rsa`) was rejected, pushed over HTTPS.
