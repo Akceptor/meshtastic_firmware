@@ -97,23 +97,18 @@ list is the Meshtastic default (Hi/Bye/Yes/No/Ok), and there's no Sync Word / PA
 
 | File | Board | Notes |
 |---|---|---|
-| `firmware-bayckrc_dual_band-2.7.26.59f5439-sync0x12.factory.bin` | BAYCKRC Dual Band TX (gateway) | LR11xx-compatible sync word. Full image incl. bootloader + partitions. Flash to offset `0x0`. |
-| `firmware-bayckrc_dual_band-2.7.26.59f5439-sync0x12.ota.bin` | BAYCKRC Dual Band TX (gateway) | LR11xx-compatible sync word. App only. For OTA, or serial flash to offset `0x10000`. |
-| `firmware-bayckrc_dual_band-2.7.26.59f5439-sync0x2b.factory.bin` | BAYCKRC Dual Band TX (gateway) | Stock Meshtastic sync word. Full image incl. bootloader + partitions. Flash to offset `0x0`. |
-| `firmware-bayckrc_dual_band-2.7.26.59f5439-sync0x2b.ota.bin` | BAYCKRC Dual Band TX (gateway) | Stock Meshtastic sync word. App only. For OTA, or serial flash to offset `0x10000`. |
+| `firmware-bayckrc_dual_band-2.7.26.59f5439.factory.bin` | BAYCKRC Dual Band TX (gateway) | Full image incl. bootloader + partitions. Flash to offset `0x0`. |
+| `firmware-bayckrc_dual_band-2.7.26.59f5439.ota.bin` | BAYCKRC Dual Band TX (gateway) | App only. For OTA, or serial flash to offset `0x10000`. |
+
+Stock Meshtastic sync word `0x2b` (single build). This board has no runtime Sync word setting;
+for an `0x12` mesh (see "The sync word trap" below) build it yourself with
+`PLATFORMIO_BUILD_FLAGS="-DMESHTASTIC_LORA_SYNCWORD=0x12"`.
 
 Built with:
 
 ```
-# sync0x12 (LR11xx-compatible):
-PLATFORMIO_BUILD_FLAGS="-DMESHTASTIC_LORA_SYNCWORD=0x12" pio run -e bayckrc_dual_band
-
-# sync0x2b (stock Meshtastic default):
 pio run -e bayckrc_dual_band
 ```
-
-See "The sync word trap" further down for why `sync0x12` exists — it matters for this
-board mainly if you want it to interoperate with SX127x boards like `emax_900_tx_oled`.
 
 ## BAYCKRC dual-band gateway — what "gateway" means here
 
@@ -157,38 +152,34 @@ default for a fresh device.
 
 | File | Board | Notes |
 |---|---|---|
-| `firmware-emax_900_tx_oled-2.7.26.59f5439-sync0x12.factory.bin` | Emax 900 OLED TX | Full image incl. bootloader + partitions. Flash to offset `0x0`. |
-| `firmware-emax_900_tx_oled-2.7.26.59f5439-sync0x12.ota.bin` | Emax 900 OLED TX | App only. For OTA, or serial flash to offset `0x10000`. |
-| `firmware-emax_900_tx_oled-2.7.26.59f5439-sync0x2b.factory.bin` | Emax 900 OLED TX | Full image, stock Meshtastic sync word. Flash to offset `0x0`. |
-| `firmware-emax_900_tx_oled-2.7.26.59f5439-sync0x2b.ota.bin` | Emax 900 OLED TX | App only, stock sync word. For OTA, or serial flash to offset `0x10000`. |
+| `firmware-emax_900_tx_oled-2.7.26.59f5439.factory.bin` | Emax 900 OLED TX | Full image incl. bootloader + partitions. Flash to offset `0x0`. |
+| `firmware-emax_900_tx_oled-2.7.26.59f5439.ota.bin` | Emax 900 OLED TX | App only. For OTA, or serial flash to offset `0x10000`. |
+
+Stock Meshtastic sync word `0x2b` (single build); switch to `0x12` at runtime from the Lua
+Settings folder or the LoRa screen.
 
 Built with:
 
 ```
-# sync0x12 (LR11xx-compatible):
-PLATFORMIO_BUILD_FLAGS="-DMESHTASTIC_LORA_SYNCWORD=0x12" pio run -e emax_900_tx_oled
-
-# sync0x2b (stock Meshtastic default):
 pio run -e emax_900_tx_oled
 ```
 
-## Radiomaster TX15 internal module — ElrsDual slot 1
+## Radiomaster TX15 internal module
 
 ### 2.7.26.81c6d2b — ELRS Lua menu verified on hardware
 
 Meshtastic for the TX15 handset's **internal** ExpressLRS module (ESP32 + LR1121 + external PA),
-to run from OTA slot 1 next to ExpressLRS in slot 0 via the ElrsDual slot-switch bootloader.
+to run next to ExpressLRS via the ElrsDual slot-switch bootloader.
 Design and verification checklist: `docs/radiomaster-tx15-internal-spec.md`. Includes the ExpressLRS
 Lua menu (same as the BAYCKRC: RAM-only messages, default canned list) over full-duplex CRSF on
 the internal-module UART (GPIO3/1); the module measures EdgeTX's baud itself (ELRS-style autobaud).
 
 | File | Board | Notes |
 |---|---|---|
-| `firmware-radiomaster_tx15_internal-2.7.26.81c6d2b.ota.bin` | Radiomaster TX15 (internal) | App only — flash to slot 1, `0x1F0000`. |
+| `firmware-radiomaster_tx15_internal-2.7.26.81c6d2b.ota.bin` | Radiomaster TX15 (internal) | App only — flash to the non-ExpressLRS slot with the ElrsDual web flasher. |
 | `firmware-radiomaster_tx15_internal-2.7.26.81c6d2b.factory.bin` | Radiomaster TX15 (internal) | Full image. **Not for dual-boot** — overwrites the bootloader and slot 0. |
 
-- **Set EdgeTX's internal module baud rate to 400k** (System → Hardware → Internal module baud
-  rate). At 1.87M the module locks and answers, but almost none of the Lua's requests reach it and
+- ⚠ **Set EdgeTX's internal module baud rate to 400k** (SYS → Hardware → Internal module). At 1.87M the module locks and answers, but almost none of the Lua's requests reach it and
   the menu never loads (cause in EdgeTX not found yet).
 - Stock Meshtastic sync word `0x2b` only: the LR1121 talks to stock nodes directly, so there is no
   `sync0x12` build (and no Sync word setting in the Lua menu on this board).
@@ -206,12 +197,13 @@ Built with:
 pio run -e radiomaster_tx15_internal
 ```
 
-## `sync0x12` — read this before flashing
+## `sync0x12` — read this before switching
 
-These images use LoRa sync word **`0x12`**, not Meshtastic's default `0x2b`.
+Sync word **`0x12`** (Emax runtime setting, or a custom `-DMESHTASTIC_LORA_SYNCWORD=0x12` build)
+replaces Meshtastic's default `0x2b`.
 
-**A node running this firmware cannot talk to any stock Meshtastic device.** Every node in
-the mesh must be built with the same override.
+**A node on `0x12` cannot talk to any stock Meshtastic device.** Every node in the mesh must
+use the same override.
 
 The reason is upstream issue
 [meshtastic/firmware#4775](https://github.com/meshtastic/firmware/issues/4775): `0x2b` is
@@ -219,26 +211,20 @@ not one of the two sync words Semtech defines, and **LR11xx receivers cannot det
 an SX127x transmitter**. Since this board is SX127x, it is unheard by LR1121/LR1110/LR1120
 nodes unless both ends use `0x12`. Fixed upstream in 3.0.
 
-For a stock-compatible build, just omit the flag:
-
-```
-pio run -e emax_900_tx_oled
-```
-
 ## Flashing
 
 Factory image (erases config):
 
 ```
 esptool.py --chip esp32 --port /dev/cu.usbserial-0001 --baud 460800 \
-  write_flash 0x0 firmware-emax_900_tx_oled-2.7.26.59f5439-sync0x12.factory.bin
+  write_flash 0x0 firmware-emax_900_tx_oled-2.7.26.59f5439.factory.bin
 ```
 
 App only (keeps config):
 
 ```
 esptool.py --chip esp32 --port /dev/cu.usbserial-0001 --baud 460800 \
-  write_flash 0x10000 firmware-emax_900_tx_oled-2.7.26.59f5439-sync0x12.ota.bin
+  write_flash 0x10000 firmware-emax_900_tx_oled-2.7.26.59f5439.ota.bin
 ```
 
 ## PA calibration

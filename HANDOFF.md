@@ -45,10 +45,10 @@ path. **Lua menu + BLE now work with EdgeTX internal module baud = 400k; at 1.87
 almost all Lua requests to the module (unresolved, details in the spec §4).** Never use
 Meshtastic in-app OTA on it (writes ELRS's slot).
 
-**5. Prebuilt + web flasher.** `/prebuilt` has one build per board per sync word: emax
-and bayck `59f5439`; TX15 `81c6d2b` ships the stock `0x2b` sync word only (LR1121, no
-`sync0x12` build), and ElrsDual `tools/dual-ota-flasher/config.js` now matches it without a
-`{sync}` slot, which hides the sync selector for TX15.
+**5. Prebuilt + web flasher.** `/prebuilt` has a single stock-`0x2b` build per board (no
+sync suffix): emax and bayck `59f5439`, TX15 `81c6d2b`. The Emax switches to `0x12` at runtime;
+bayck needs a custom build for `0x12`. The ElrsDual web flasher has no sync selector any more and
+shows a ⚠ 400k internal-baud note when the TX15 is picked.
 
 **6. The test Emax is now dual-boot:** ElrsDual slot-switch bootloader (3 quick power cycles
 flip slots) + ElrsDual partition table (LittleFS 128 KB, counter sector 0x3F0000) +
