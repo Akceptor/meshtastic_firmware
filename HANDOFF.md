@@ -53,12 +53,14 @@ image was backed up to the session scratchpad only. The repartition reformatted 
 LittleFS; a `--export-config` YAML was taken first, but the re-import was not done by the agent
 (an automated `otadata` write to switch slots was denied by the permission check) — **check the
 Meshtastic config on the Emax** and re-import/re-set region + channel if needed.
-Note: `variants/esp32/emax_900_tx_oled/partitions-dual.csv` (LittleFS 192 KB, overlapping
-0x3F0000) does **not** match the ElrsDual layout — its `.factory.bin` would clobber the
-slot-switch counter; only the `.ota.bin` is dual-boot safe.
+Partition tables: emax and bayck `partitions-dual.csv` originally gave LittleFS 192 KB,
+overlapping the slot-switch counter at 0x3F0000; fixed in `59f543962` to the ElrsDual layout
+(same as unified RX and TX15). Only `.factory.bin` embeds a table; the ElrsDual web flasher
+never uses it — it writes the `.ota.bin` to the chosen slot plus its own bundled bootloader,
+partition table and boot_app0 (`tools/dual-ota-flasher/flasher.js:241-248`).
 
 **Open items:** bayck + TX15 hardware tests; TX15 power measurement then raise
-`LR11X0_PA_MAX_EIRP_DBM`; TX15 step 2 (Lua menu); align the emax partition table with ElrsDual;
+`LR11X0_PA_MAX_EIRP_DBM`; TX15 step 2 (Lua menu); 
 `trunk fmt` never run (not installed here); pre-existing `getFreq() < 1e9` comparisons in
 `LR11x0Interface.cpp` (lines ~144-151, MHz vs Hz) are always true — harmless on sub-GHz, wrong
 for 2.4 GHz; ElrsDual's SSH key (`~/.ssh/akceptor_rsa`) was rejected, pushed over HTTPS.
