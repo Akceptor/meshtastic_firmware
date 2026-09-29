@@ -22,6 +22,7 @@
 #include <esp_system.h>
 #include <esp_rom_gpio.h>
 #include <soc/gpio_sig_map.h>
+#include <soc/uart_reg.h>
 #if HAS_SCREEN
 #include "MessageStore.h"
 #else
@@ -1309,11 +1310,58 @@ int32_t CrsfHandsetModule::runOnce()
         return 1000;
     }
 
+#ifdef CRSF_UART_RX_PIN
+    // Blind cycling starves the main loop: listening at 5.25M to EdgeTX's 1.87M internal link floods the
+    // UART with errors, so the watchdog never reaches the right rate. Measure it instead, like ELRS.
+    const uint32_t baud = autobaud();
+    for (uint8_t k = 0; k < CRSF_BAUD_COUNT; k++)
+        if (CRSF_BAUDS[k] == baud)
+            baudIdx = k;
+#else
     inverted = !inverted;
     if (inverted)
         baudIdx = (baudIdx + 1) % CRSF_BAUD_COUNT;
+#endif
     applyPolarityAndBaud();
     return 1000;
 }
+
+#ifdef CRSF_UART_RX_PIN
+// Port of ExpressLRS CRSFHandset::autobaud() (PLATFORM_ESP32), on UART1: stays at 400k while the
+// hardware measures pulse widths, then tries the nearest known rate in both polarities.
+uint32_t CrsfHandsetModule::autobaud()
+{
+    if (autobaudState == AutobaudState::Measured) {
+        inverted = !inverted;
+        autobaudState = AutobaudState::Inverted;
+        return CRSF_BAUDS[baudIdx];
+    }
+    if (autobaudState == AutobaudState::Inverted) {
+        inverted = !inverted;
+        autobaudState = AutobaudState::Init;
+    }
+
+    if (REG_GET_BIT(UART_AUTOBAUD_REG(1), UART_AUTOBAUD_EN) == 0) {
+        REG_WRITE(UART_AUTOBAUD_REG(1), 4 << UART_GLITCH_FILT_S | UART_AUTOBAUD_EN);
+        return CRSF_BAUDS[0];
+    }
+    if (REG_READ(UART_RXD_CNT_REG(1)) < 300)
+        return CRSF_BAUDS[0];
+
+    autobaudState = AutobaudState::Measured;
+    const int32_t lowPeriod = (int32_t)REG_READ(UART_LOWPULSE_REG(1));
+    const int32_t highPeriod = (int32_t)REG_READ(UART_HIGHPULSE_REG(1));
+    REG_CLR_BIT(UART_AUTOBAUD_REG(1), UART_AUTOBAUD_EN);
+
+    // ELRS: "based on testing use max and add 2 for lowest deviation" (APB 80 MHz)
+    const int32_t measured = 80000000 / (std::max(lowPeriod, highPeriod) + 3);
+    uint32_t best = CRSF_BAUDS[0];
+    for (uint32_t b : CRSF_BAUDS)
+        if (std::abs(measured - (int32_t)best) > std::abs(measured - (int32_t)b))
+            best = b;
+    LOG_INFO("CrsfHandset: autobaud low=%ld high=%ld -> %lu", (long)lowPeriod, (long)highPeriod, (unsigned long)best);
+    return best;
+}
+#endif
 
 #endif

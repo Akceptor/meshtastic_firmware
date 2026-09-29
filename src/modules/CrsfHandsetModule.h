@@ -34,6 +34,9 @@ class CrsfHandsetModule : private concurrency::OSThread
     void sendSelectedMessage();
     void setDirection(bool transmit);
     void applyPolarityAndBaud();
+#ifdef CRSF_UART_RX_PIN
+    uint32_t autobaud();
+#endif
     void updateMeshSnapshot();
 #if HAS_SCREEN
     void rebuildMessagesFromStore();
@@ -58,6 +61,10 @@ class CrsfHandsetModule : private concurrency::OSThread
     bool inverted = true;
 #endif
     uint8_t baudIdx = 0;
+#ifdef CRSF_UART_RX_PIN
+    enum class AutobaudState { Init, Measured, Inverted };
+    AutobaudState autobaudState = AutobaudState::Init;
+#endif
     uint32_t framesRxAtLastCheck = 0;
     uint32_t pingsLogged = 0;
 
