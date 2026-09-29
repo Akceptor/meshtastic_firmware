@@ -174,21 +174,24 @@ pio run -e emax_900_tx_oled
 
 ## Radiomaster TX15 internal module — ElrsDual slot 1
 
-### 2.7.26.1459498 — untested on hardware
+### 2.7.26.81c6d2b — ELRS Lua menu verified on hardware
 
 Meshtastic for the TX15 handset's **internal** ExpressLRS module (ESP32 + LR1121 + external PA),
 to run from OTA slot 1 next to ExpressLRS in slot 0 via the ElrsDual slot-switch bootloader.
 Design and verification checklist: `docs/radiomaster-tx15-internal-spec.md`. Includes the ExpressLRS
 Lua menu (same as the BAYCKRC: RAM-only messages, default canned list) over full-duplex CRSF on
-the internal-module UART (GPIO3/1); the watchdog finds EdgeTX's baud/polarity by itself.
+the internal-module UART (GPIO3/1); the module measures EdgeTX's baud itself (ELRS-style autobaud).
 
 | File | Board | Notes |
 |---|---|---|
-| `firmware-radiomaster_tx15_internal-2.7.26.1459498-sync0x12.ota.bin` | Radiomaster TX15 (internal) | LR11xx-compatible sync word. App only — flash to slot 1, `0x1F0000`. |
-| `firmware-radiomaster_tx15_internal-2.7.26.1459498-sync0x2b.ota.bin` | Radiomaster TX15 (internal) | Stock Meshtastic sync word. App only — flash to slot 1, `0x1F0000`. |
-| `firmware-radiomaster_tx15_internal-2.7.26.1459498-sync0x12.factory.bin` | Radiomaster TX15 (internal) | Full image. **Not for dual-boot** — overwrites the bootloader and slot 0. |
-| `firmware-radiomaster_tx15_internal-2.7.26.1459498-sync0x2b.factory.bin` | Radiomaster TX15 (internal) | Full image. **Not for dual-boot**. |
+| `firmware-radiomaster_tx15_internal-2.7.26.81c6d2b.ota.bin` | Radiomaster TX15 (internal) | App only — flash to slot 1, `0x1F0000`. |
+| `firmware-radiomaster_tx15_internal-2.7.26.81c6d2b.factory.bin` | Radiomaster TX15 (internal) | Full image. **Not for dual-boot** — overwrites the bootloader and slot 0. |
 
+- **Set EdgeTX's internal module baud rate to 400k** (System → Hardware → Internal module baud
+  rate). At 1.87M the module locks and answers, but almost none of the Lua's requests reach it and
+  the menu never loads (cause in EdgeTX not found yet).
+- Stock Meshtastic sync word `0x2b` only: the LR1121 talks to stock nodes directly, so there is no
+  `sync0x12` build (and no Sync word setting in the Lua menu on this board).
 - **TX power is capped at 20 dBm (100 mW)** until measured on a power meter; the PA table is
   ExpressLRS's nominal one. Raise `LR11X0_PA_MAX_EIRP_DBM` only after measuring.
 - **Never use Meshtastic's in-app OTA update** on this board: it writes the inactive slot,
@@ -200,7 +203,6 @@ the internal-module UART (GPIO3/1); the watchdog finds EdgeTX's baud/polarity by
 Built with:
 
 ```
-PLATFORMIO_BUILD_FLAGS="-DMESHTASTIC_LORA_SYNCWORD=0x12" pio run -e radiomaster_tx15_internal
 pio run -e radiomaster_tx15_internal
 ```
 
