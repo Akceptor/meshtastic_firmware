@@ -50,7 +50,13 @@ class CrsfHandsetModule : private concurrency::OSThread
     uint8_t rxLen = 0;
     uint8_t rxExpected = 0;
 
+    // Half-duplex (CRSF_UART_PIN) starts inverted, matching ELRS's own half-duplex default; full-duplex
+    // (CRSF_UART_RX_PIN/TX_PIN) starts non-inverted (ELRS CRSFHandset::Begin: UARTinverted = halfDuplex).
+#ifdef CRSF_UART_RX_PIN
+    bool inverted = false;
+#else
     bool inverted = true;
+#endif
     uint8_t baudIdx = 0;
     uint32_t framesRxAtLastCheck = 0;
     uint32_t pingsLogged = 0;

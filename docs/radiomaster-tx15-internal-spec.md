@@ -1,9 +1,9 @@
 # Radiomaster TX15 internal ELRS module — Meshtastic variant spec
 
-Status: **planned, not implemented.** Target: Meshtastic in OTA slot 1 next to ExpressLRS in
-slot 0 (ElrsDual dual-boot). Env/dir: `variants/esp32/radiomaster_tx15_internal/`. Step 1 is
-Meshtastic only (phone over BLE); the ELRS Lua menu is step 2 (needs full-duplex UART0 in
-`CrsfHandsetModule`).
+Status: **step 1 and step 2 implemented; not yet verified on hardware.** Target: Meshtastic in OTA
+slot 1 next to ExpressLRS in slot 0 (ElrsDual dual-boot). Env/dir:
+`variants/esp32/radiomaster_tx15_internal/`. Step 1 is Meshtastic only (phone over BLE); the ELRS
+Lua menu is step 2 (full-duplex UART0 in `CrsfHandsetModule`, done — see section 4).
 
 Sources: ELRS layout `Targets/TX/Radiomaster TX15.json` (`radiomaster.tx_dual.tx15`, firmware
 `Unified_ESP32_LR1121_TX`); ExpressLRS v4 (cross-checked v3) — citations below are into
@@ -156,6 +156,59 @@ EdgeTX `serialpassthrough rfmod 0 115200` bridges handset USB to this UART.
 Step 1: keep the console on UART0 at 115200 (only USB-less log/API path, via passthrough). Don't
 define `CRSF_UART_PIN` (the half-duplex CrsfHandsetModule doesn't apply). Set
 `MESHTASTIC_EXCLUDE_SERIAL=1`. Step 2 (Lua) must move/mute the console.
+
+**Status: implemented.**
+
+`CrsfHandsetModule` gained a full-duplex mode selected by two new variant macros,
+`CRSF_UART_RX_PIN`/`CRSF_UART_TX_PIN` (`src/modules/CrsfHandsetModule.{h,cpp}`), kept alongside the
+existing half-duplex `CRSF_UART_PIN` path (emax/bayck), unchanged. Still `Serial1` (UART1
+peripheral) routed through the GPIO matrix — never UART0 hardware — onto GPIO3 (RX)/GPIO1 (TX) on
+the TX15. Differences from half-duplex:
+
+- `setDirection()` is a no-op in full-duplex: RX matrix-in and TX matrix-out both stay attached at
+  all times, no turnaround.
+- `applyPolarityAndBaud()` applies polarity via `gpio_matrix_in(rx, U1RXD_IN_IDX, inverted)` /
+  `gpio_matrix_out(tx, U1TXD_OUT_IDX, inverted, false)` on both pins instead of flipping direction.
+- `inverted` starts `false` (non-inverted), matching ELRS `CRSFHandset::Begin`'s
+  `UARTinverted = halfDuplex` (full duplex → starts uninverted). Half-duplex keeps starting inverted.
+- The same baud-cycling watchdog in `runOnce()` is reused unchanged, including the high rates
+  (1.87M/5.25M) EdgeTX internal modules commonly run.
+- `sendFrame()` skips the post-send input drain in full-duplex: there's no TX→RX echo (separate
+  wires), and RX is live throughout, so draining would eat real incoming bytes.
+
+`Modules.cpp`'s construction guard now reads `#if defined(CRSF_UART_PIN) || defined(CRSF_UART_RX_PIN)`
+(both the include and the `new CrsfHandsetModule()` call).
+
+`variants/esp32/radiomaster_tx15_internal/variant.h` defines `CRSF_UART_RX_PIN 3` /
+`CRSF_UART_TX_PIN 1`. `platformio.ini` moves the console off UART0 with
+`-DUSER_DEBUG_PORT=Serial2 -DRX2=18 -DTX2=5` (the backpack UART pins, otherwise unused by this
+build; GPIO16/17 are internal flash on this ESP32-PICO and must not be touched).
+`arduino-esp32`'s `HardwareSerial.h` guards `RX2`/`TX2` with `#ifndef`, so passing them as build
+flags overrides the board defaults; verified in the actual TX15 build's compile command for
+`SerialConsole.cpp` (`-DUSER_DEBUG_PORT=Serial2 -DRX2=18 -DTX2=5` present) and that the build links
+clean. `MESHTASTIC_EXCLUDE_SERIAL=1` (SerialModule, a separate feature) stays set as before. No
+other code in `src/main.cpp`/`src/platform/esp32/` begins `Serial` (UART0) on this build.
+
+Lua fields, DeviceSettings-backed Settings, the RAM message ring (`HAS_SCREEN 0`), canned-message
+fallback, and Boot-ELRS via second-OTA-partition detection are all unchanged and apply to the TX15
+as-is — the id layout has no Sync Word (not `EMAX_900_TX_OLED`) and no PA Fan `SELECT`
+(`RF95_FAN_EN && USE_RF95` is false, since this board uses LR1121/`USE_LR1121`, not RF95).
+
+Build: `pio run -e radiomaster_tx15_internal` succeeds; app binary (flashed to the OTA slot, 4 MB
+partition table's 0x1F0000/1,966,080 B slot) is 1,814,608 B — fits with ~150 KB headroom (92.3%
+flash usage reported by the linker). `emax_900_tx_oled` and `bayckrc_dual_band` both still build
+clean and unchanged (half-duplex path untouched; only the shared construction-guard `#if` and
+`inverted`'s default differ syntactically, not in the half-duplex branch's behavior).
+
+Known uncertainties (unresolved, need hardware/EdgeTX verification):
+- Whether EdgeTX's internal-module CRSF autobaud/polarity detection actually lands on one of the
+  cycled `CRSF_BAUDS` entries for an *internal* module (vs. the external-module JR-bay assumptions
+  the watchdog was written against) — the bake list matches ELRS's own `TxToHandsetBauds`, but this
+  hasn't been confirmed against EdgeTX's internal-module CRSF driver specifically.
+- Whether EdgeTX needs anything else from an internal module (a specific baud lock, a minimum
+  Device Info latency, etc.) before it lists it in the Lua device list — untested without hardware.
+- The ROM bootloader prints its own boot log to UART0 at startup, before the app (and this module)
+  ever runs; harmless (EdgeTX/ELRS see the same thing), noted here rather than worked around.
 
 ## 5. Partitions, hardware model, build
 

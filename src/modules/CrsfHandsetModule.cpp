@@ -1,7 +1,9 @@
 #include "configuration.h"
 
-// Only built for boards with a CRSF-capable UART pin wired to the radio bay (see variant.h).
-#ifdef CRSF_UART_PIN
+// Only built for boards with a CRSF-capable UART pin wired to the radio bay (see variant.h):
+// CRSF_UART_PIN for the half-duplex JR-bay wiring, or CRSF_UART_RX_PIN/CRSF_UART_TX_PIN for a
+// full-duplex link (e.g. an internal ELRS module's UART0).
+#if defined(CRSF_UART_PIN) || defined(CRSF_UART_RX_PIN)
 
 #include "CrsfHandsetModule.h"
 #include "MeshService.h"
@@ -227,12 +229,22 @@ CrsfHandsetModule::CrsfHandsetModule() : concurrency::OSThread("CrsfHandset")
     recordResetReason();
     // Partition table doesn't change at runtime; check once here rather than on every parameter read.
     bootElrsAvailable = DeviceSettings::hasSecondOtaPartition();
+#ifdef CRSF_UART_RX_PIN
+    // Full-duplex: begin() with distinct RX/TX pins; applyPolarityAndBaud() then attaches the matrix
+    // (setDirection() is a no-op in this mode).
+    crsfPort.begin(CRSF_BAUDS[0], SERIAL_8N1, CRSF_UART_RX_PIN, CRSF_UART_TX_PIN, false);
+#else
     crsfPort.begin(CRSF_BAUDS[0], SERIAL_8N1, CRSF_UART_PIN, CRSF_UART_PIN, false);
+#endif
     crsfPort.setTimeout(0);
     crsfHandsetStats.baud = CRSF_BAUDS[0];
     crsfHandsetStats.inverted = inverted;
     // UART_MODE_RS485_HALF_DUPLEX only toggles RTS on ESP32 and never tri-states TX, so switch by hand.
     setDirection(false);
+#ifdef CRSF_UART_RX_PIN
+    // begin() already attached the matrix at the default (inverted) polarity; apply our non-inverted start.
+    applyPolarityAndBaud();
+#endif
     // Reply from the UART event task: an OSThread poll is too late for the handset's reply window.
     crsfPort.setRxTimeout(2);
     crsfPort.onReceive([this]() { onUartData(); }, true);
@@ -242,12 +254,21 @@ CrsfHandsetModule::CrsfHandsetModule() : concurrency::OSThread("CrsfHandset")
     // and notifies synchronously on the main thread.
     textMessageObserver.observe(textMessageModule);
 #endif
+#ifdef CRSF_UART_RX_PIN
+    LOG_INFO("CrsfHandset: listening on GPIO%d/%d (full-duplex) @ %u baud", CRSF_UART_RX_PIN, CRSF_UART_TX_PIN,
+             CRSF_BAUDS[0]);
+#else
     LOG_INFO("CrsfHandset: listening on GPIO%d @ %u baud", CRSF_UART_PIN, CRSF_BAUDS[0]);
+#endif
 }
 
-// Mirrors ExpressLRS CRSFHandset::duplex_set_RX/TX, on UART1.
+// Mirrors ExpressLRS CRSFHandset::duplex_set_RX/TX, on UART1. No-op in full-duplex: both directions
+// stay attached to the matrix at all times (see applyPolarityAndBaud).
 void CrsfHandsetModule::setDirection(bool transmit)
 {
+#ifdef CRSF_UART_RX_PIN
+    (void)transmit;
+#else
     const gpio_num_t pin = (gpio_num_t)CRSF_UART_PIN;
     if (transmit) {
         gpio_set_pull_mode(pin, GPIO_FLOATING);
@@ -267,13 +288,20 @@ void CrsfHandsetModule::setDirection(bool transmit)
             gpio_pulldown_dis(pin);
         }
     }
+#endif
 }
 
 void CrsfHandsetModule::applyPolarityAndBaud()
 {
     const uint32_t baud = CRSF_BAUDS[baudIdx];
     crsfPort.updateBaudRate(baud);
+#ifdef CRSF_UART_RX_PIN
+    // Full-duplex: both directions stay attached; only the matrix polarity changes.
+    gpio_matrix_in((gpio_num_t)CRSF_UART_RX_PIN, U1RXD_IN_IDX, inverted);
+    gpio_matrix_out((gpio_num_t)CRSF_UART_TX_PIN, U1TXD_OUT_IDX, inverted, false);
+#else
     setDirection(false);
+#endif
     crsfHandsetStats.baud = baud;
     crsfHandsetStats.inverted = inverted;
     LOG_INFO("CrsfHandset: trying %u baud, %s", baud, inverted ? "INV" : "NRM");
@@ -299,8 +327,12 @@ void CrsfHandsetModule::sendFrame(uint8_t type, uint8_t destAddr, const uint8_t 
     crsfPort.write(buf, i);
     crsfPort.flush();
     setDirection(false);
+#ifndef CRSF_UART_RX_PIN
+    // Half-duplex only: drains our own echo off the shared line. Full-duplex has no echo (separate
+    // RX/TX pins) and RX is live throughout, so draining here would eat real incoming bytes.
     while (crsfPort.available())
         crsfPort.read();
+#endif
 }
 
 void CrsfHandsetModule::sendDeviceInfo(uint8_t destAddr)

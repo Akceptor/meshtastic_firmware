@@ -41,3 +41,7 @@
 
 #define TX15_BACKPACK_EN 19
 #define TX15_BACKPACK_BOOT 23
+
+// Full-duplex CRSF link to the EdgeTX handset on UART0's default pins, via Serial1/matrix (CrsfHandsetModule).
+#define CRSF_UART_RX_PIN 3
+#define CRSF_UART_TX_PIN 1

@@ -71,7 +71,7 @@
 #if !MESHTASTIC_EXCLUDE_GENERIC_THREAD_MODULE
 #include "modules/GenericThreadModule.h"
 #endif
-#ifdef CRSF_UART_PIN
+#if defined(CRSF_UART_PIN) || defined(CRSF_UART_RX_PIN)
 #include "modules/CrsfHandsetModule.h"
 #endif
 
@@ -169,7 +169,7 @@ void setupModules()
 #if !MESHTASTIC_EXCLUDE_GENERIC_THREAD_MODULE
     new GenericThreadModule();
 #endif
-#ifdef CRSF_UART_PIN
+#if defined(CRSF_UART_PIN) || defined(CRSF_UART_RX_PIN)
     new CrsfHandsetModule();
 #endif
     // Note: if the rest of meshtastic doesn't need to explicitly use your module, you do not need to assign the instance
