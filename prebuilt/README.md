@@ -174,26 +174,28 @@ pio run -e emax_900_tx_oled
 
 ## Radiomaster TX15 internal module — ElrsDual slot 1
 
-### 2.7.26.9c60209 — untested on hardware
+### 2.7.26.1459498 — untested on hardware
 
 Meshtastic for the TX15 handset's **internal** ExpressLRS module (ESP32 + LR1121 + external PA),
 to run from OTA slot 1 next to ExpressLRS in slot 0 via the ElrsDual slot-switch bootloader.
-Design and verification checklist: `docs/radiomaster-tx15-internal-spec.md`. No Lua menu yet
-(step 1) — manage it from the phone app over Bluetooth.
+Design and verification checklist: `docs/radiomaster-tx15-internal-spec.md`. Includes the ExpressLRS
+Lua menu (same as the BAYCKRC: RAM-only messages, default canned list) over full-duplex CRSF on
+the internal-module UART (GPIO3/1); the watchdog finds EdgeTX's baud/polarity by itself.
 
 | File | Board | Notes |
 |---|---|---|
-| `firmware-radiomaster_tx15_internal-2.7.26.9c60209-sync0x12.ota.bin` | Radiomaster TX15 (internal) | LR11xx-compatible sync word. App only — flash to slot 1, `0x1F0000`. |
-| `firmware-radiomaster_tx15_internal-2.7.26.9c60209-sync0x2b.ota.bin` | Radiomaster TX15 (internal) | Stock Meshtastic sync word. App only — flash to slot 1, `0x1F0000`. |
-| `firmware-radiomaster_tx15_internal-2.7.26.9c60209-sync0x12.factory.bin` | Radiomaster TX15 (internal) | Full image. **Not for dual-boot** — overwrites the bootloader and slot 0. |
-| `firmware-radiomaster_tx15_internal-2.7.26.9c60209-sync0x2b.factory.bin` | Radiomaster TX15 (internal) | Full image. **Not for dual-boot**. |
+| `firmware-radiomaster_tx15_internal-2.7.26.1459498-sync0x12.ota.bin` | Radiomaster TX15 (internal) | LR11xx-compatible sync word. App only — flash to slot 1, `0x1F0000`. |
+| `firmware-radiomaster_tx15_internal-2.7.26.1459498-sync0x2b.ota.bin` | Radiomaster TX15 (internal) | Stock Meshtastic sync word. App only — flash to slot 1, `0x1F0000`. |
+| `firmware-radiomaster_tx15_internal-2.7.26.1459498-sync0x12.factory.bin` | Radiomaster TX15 (internal) | Full image. **Not for dual-boot** — overwrites the bootloader and slot 0. |
+| `firmware-radiomaster_tx15_internal-2.7.26.1459498-sync0x2b.factory.bin` | Radiomaster TX15 (internal) | Full image. **Not for dual-boot**. |
 
 - **TX power is capped at 20 dBm (100 mW)** until measured on a power meter; the PA table is
   ExpressLRS's nominal one. Raise `LR11X0_PA_MAX_EIRP_DBM` only after measuring.
 - **Never use Meshtastic's in-app OTA update** on this board: it writes the inactive slot,
   which is ExpressLRS.
 - RSSI reads ~15 dB high (the module has an external LNA).
-- The serial console stays on UART0 (the CRSF lines to the handset) at 115200.
+- The serial console is moved to Serial2 on the backpack debug pins (GPIO18/5) so UART0 is
+  free for CRSF; USB-less logs via EdgeTX passthrough are no longer available.
 
 Built with:
 
