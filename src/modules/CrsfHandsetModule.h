@@ -1,5 +1,6 @@
 #pragma once
 
+#include "configuration.h" // HAS_WIFI, RF95_FAN_EN, EMAX_900_TX_OLED
 #include "concurrency/OSThread.h"
 #include "mesh/MeshTypes.h"
 #include <Arduino.h>
@@ -34,6 +35,8 @@ class CrsfHandsetModule : private concurrency::OSThread
     void applyPolarityAndBaud();
     void updateMeshSnapshot();
     void rebuildMessagesFromStore();
+    void buildSettingsSnapshot(uint8_t writeIdx); // fills meshSnapshots[writeIdx].settings
+    void applyPendingSettingsWrite(uint8_t fieldId, uint8_t value);
 
     RxState rxState = RxState::WaitSync;
     uint8_t rxBuf[64];
@@ -54,6 +57,23 @@ class CrsfHandsetModule : private concurrency::OSThread
     // Message SELECT field: index into the canned-message option list, written from the UART event
     // task; clamped to the current option count both on write and on read.
     std::atomic<uint8_t> msgSelectIndex{0};
+
+    // Settings > (Region/Preset/Slot/TxPower/Role/Bluetooth/WiFi/SyncWord/Fan) writes: the UART task
+    // just records the latest one here (single slot; Lua edits one field at a time), and runOnce()
+    // applies it via the menuHandler:: functions and refreshes the snapshot. 0 = none pending.
+    std::atomic<uint8_t> pendingSettingsField{0};
+    std::atomic<uint8_t> pendingSettingsValue{0};
+
+    // Settings > Reboot/Shutdown/"Boot ELRS" COMMAND fields: lcs* status only (0 idle, 3 askConfirm);
+    // the fixed confirmation text is baked into buildParameterEntryBody, not stored here.
+    std::atomic<uint8_t> rebootCmdStatus{0};
+    std::atomic<bool> rebootRequested{false};
+    std::atomic<uint8_t> shutdownCmdStatus{0};
+    std::atomic<bool> shutdownRequested{false};
+#ifdef EMAX_900_TX_OLED
+    std::atomic<uint8_t> bootElrsCmdStatus{0};
+    std::atomic<bool> bootElrsRequested{false};
+#endif
 
     // Entry payload assembled whole, then sliced into <=64B CRSF frames on request; UART task only,
     // so a member (not a uart_event_task stack local) is fine despite the size.
@@ -93,6 +113,26 @@ class CrsfHandsetModule : private concurrency::OSThread
         char label[24] = "";                          // preview shown as the message folder's name
         char lines[MESH_MSG_ROW_COUNT][22] = {};       // word-wrapped rows (<=21 chars); empty means hidden row
     };
+    // Current values for the Settings folder; indices are into the matching menuHandler::*OptionName/
+    // *OptionValue tables. Built on the main thread (config/NodeDB reads are not safe from the UART task).
+    struct SettingsSnapshot {
+        uint8_t regionIdx = 0;
+        uint8_t presetIdx = 0;
+        uint8_t slotValue = 0; // config.lora.channel_num, clamped to uint8_t
+        uint8_t slotMax = 0;   // computeLoraNumChannels(), clamped to uint8_t
+        uint8_t txPowerIdx = 0;
+        uint8_t roleIdx = 0;
+        uint8_t bluetoothOn = 0; // 0/1
+#if HAS_WIFI
+        uint8_t wifiOn = 0; // 0/1
+#endif
+#ifdef EMAX_900_TX_OLED
+        uint8_t syncWordIdx = 0; // 0 = 0x2b (standard), 1 = 0x12 (LR11xx compat)
+#endif
+#ifdef RF95_FAN_EN
+        uint8_t fanIdx = 0; // 0 = Auto, 1 = On, 2 = Off
+#endif
+    };
     struct MeshSnapshot {
         uint8_t nodeCount = 0;
         MeshNodeSnapshot nodes[MESH_MAX_NODES];
@@ -100,6 +140,7 @@ class CrsfHandsetModule : private concurrency::OSThread
         uint8_t msgOptionCount = 0;
         char msgOptionsStr[MSG_OPTIONS_STR_LEN] = "";
         char msgOptionTexts[MSG_OPTION_MAX_COUNT][MSG_OPTION_TEXT_LEN] = {};
+        SettingsSnapshot settings;
     };
     MeshSnapshot meshSnapshots[2];
     std::atomic<uint8_t> meshSnapshotIdx{0};

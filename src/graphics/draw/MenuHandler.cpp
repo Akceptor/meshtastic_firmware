@@ -68,6 +68,67 @@ BannerOverlayOptions createStaticBannerOptions(const char *message, const MenuOp
     return bannerOptions;
 }
 
+// Hoisted to file scope (rather than function-local statics) so CrsfHandsetModule's Lua Settings
+// folder can enumerate the same choices as the OLED pickers below via menuHandler's option accessors.
+const LoraRegionOption regionOptions[] = {
+    {"Back", OptionsAction::Back},
+    {"US", OptionsAction::Select, meshtastic_Config_LoRaConfig_RegionCode_US},
+    {"EU_433", OptionsAction::Select, meshtastic_Config_LoRaConfig_RegionCode_EU_433},
+    {"EU_868", OptionsAction::Select, meshtastic_Config_LoRaConfig_RegionCode_EU_868},
+    {"CN", OptionsAction::Select, meshtastic_Config_LoRaConfig_RegionCode_CN},
+    {"JP", OptionsAction::Select, meshtastic_Config_LoRaConfig_RegionCode_JP},
+    {"ANZ", OptionsAction::Select, meshtastic_Config_LoRaConfig_RegionCode_ANZ},
+    {"KR", OptionsAction::Select, meshtastic_Config_LoRaConfig_RegionCode_KR},
+    {"TW", OptionsAction::Select, meshtastic_Config_LoRaConfig_RegionCode_TW},
+    {"RU", OptionsAction::Select, meshtastic_Config_LoRaConfig_RegionCode_RU},
+    {"IN", OptionsAction::Select, meshtastic_Config_LoRaConfig_RegionCode_IN},
+    {"NZ_865", OptionsAction::Select, meshtastic_Config_LoRaConfig_RegionCode_NZ_865},
+    {"TH", OptionsAction::Select, meshtastic_Config_LoRaConfig_RegionCode_TH},
+    {"LORA_24", OptionsAction::Select, meshtastic_Config_LoRaConfig_RegionCode_LORA_24},
+    {"UA_433", OptionsAction::Select, meshtastic_Config_LoRaConfig_RegionCode_UA_433},
+    {"UA_868", OptionsAction::Select, meshtastic_Config_LoRaConfig_RegionCode_UA_868},
+    {"MY_433", OptionsAction::Select, meshtastic_Config_LoRaConfig_RegionCode_MY_433},
+    {"MY_919", OptionsAction::Select, meshtastic_Config_LoRaConfig_RegionCode_MY_919},
+    {"SG_923", OptionsAction::Select, meshtastic_Config_LoRaConfig_RegionCode_SG_923},
+    {"PH_433", OptionsAction::Select, meshtastic_Config_LoRaConfig_RegionCode_PH_433},
+    {"PH_868", OptionsAction::Select, meshtastic_Config_LoRaConfig_RegionCode_PH_868},
+    {"PH_915", OptionsAction::Select, meshtastic_Config_LoRaConfig_RegionCode_PH_915},
+    {"ANZ_433", OptionsAction::Select, meshtastic_Config_LoRaConfig_RegionCode_ANZ_433},
+    {"KZ_433", OptionsAction::Select, meshtastic_Config_LoRaConfig_RegionCode_KZ_433},
+    {"KZ_863", OptionsAction::Select, meshtastic_Config_LoRaConfig_RegionCode_KZ_863},
+    {"NP_865", OptionsAction::Select, meshtastic_Config_LoRaConfig_RegionCode_NP_865},
+    {"BR_902", OptionsAction::Select, meshtastic_Config_LoRaConfig_RegionCode_BR_902},
+};
+constexpr size_t regionOptionCount = sizeof(regionOptions) / sizeof(regionOptions[0]);
+
+const RadioPresetOption presetOptions[] = {
+    {"Back", OptionsAction::Back},
+    {"LongTurbo", OptionsAction::Select, meshtastic_Config_LoRaConfig_ModemPreset_LONG_TURBO},
+    {"LongModerate", OptionsAction::Select, meshtastic_Config_LoRaConfig_ModemPreset_LONG_MODERATE},
+    {"LongFast", OptionsAction::Select, meshtastic_Config_LoRaConfig_ModemPreset_LONG_FAST},
+    {"MediumSlow", OptionsAction::Select, meshtastic_Config_LoRaConfig_ModemPreset_MEDIUM_SLOW},
+    {"MediumFast", OptionsAction::Select, meshtastic_Config_LoRaConfig_ModemPreset_MEDIUM_FAST},
+    {"ShortSlow", OptionsAction::Select, meshtastic_Config_LoRaConfig_ModemPreset_SHORT_SLOW},
+    {"ShortFast", OptionsAction::Select, meshtastic_Config_LoRaConfig_ModemPreset_SHORT_FAST},
+    {"ShortTurbo", OptionsAction::Select, meshtastic_Config_LoRaConfig_ModemPreset_SHORT_TURBO},
+};
+constexpr size_t presetOptionCount = sizeof(presetOptions) / sizeof(presetOptions[0]);
+
+constexpr const char *roleNames[] = {"Client", "Client Mute", "Lost and Found", "Tracker"};
+constexpr meshtastic_Config_DeviceConfig_Role roleValues[] = {
+    meshtastic_Config_DeviceConfig_Role_CLIENT, meshtastic_Config_DeviceConfig_Role_CLIENT_MUTE,
+    meshtastic_Config_DeviceConfig_Role_LOST_AND_FOUND, meshtastic_Config_DeviceConfig_Role_TRACKER};
+constexpr size_t roleOptionCount = sizeof(roleNames) / sizeof(roleNames[0]);
+static_assert(sizeof(roleValues) / sizeof(roleValues[0]) == roleOptionCount, "role name/value tables must match");
+
+// Same 12 dBm steps as ExpressLRS's DAC-controlled power_values rows (see txPowerPicker); index 0
+// here is the lowest step (10 dBm), not "Back" (the OLED picker prepends its own Back entry).
+constexpr const char *txPowerNames[] = {"10dBm", "14dBm", "17dBm", "20dBm", "21dBm", "22dBm",
+                                        "23dBm", "24dBm", "25dBm", "26dBm", "27dBm", "28dBm"};
+constexpr int8_t txPowerDbmTable[] = {10, 14, 17, 20, 21, 22, 23, 24, 25, 26, 27, 28};
+constexpr size_t txPowerOptionCountVal = sizeof(txPowerDbmTable) / sizeof(txPowerDbmTable[0]);
+static_assert(sizeof(txPowerNames) / sizeof(txPowerNames[0]) == txPowerOptionCountVal, "tx power name/value tables must match");
+
 } // namespace
 
 menuHandler::screenMenus menuHandler::menuQueue = MenuNone;
@@ -145,40 +206,74 @@ void menuHandler::OnboardMessage()
     screen->showOverlayBanner(bannerOptions);
 }
 
+// Shared "apply" body: also called directly by CrsfHandsetModule's Lua Region SELECT write.
+void menuHandler::applyLoraRegion(meshtastic_Config_LoRaConfig_RegionCode region)
+{
+    if (config.lora.region == region) {
+        return;
+    }
+
+    config.lora.region = region;
+    auto changes = SEGMENT_CONFIG;
+
+// FIXME: This should be a method consolidated with the same logic in the admin message as well
+// This is needed as we wait til picking the LoRa region to generate keys for the first time.
+#if !(MESHTASTIC_EXCLUDE_PKI_KEYGEN || MESHTASTIC_EXCLUDE_PKI)
+    if (!owner.is_licensed) {
+        bool keygenSuccess = false;
+        if (config.security.private_key.size == 32) {
+            // public key is derived from private, so this will always have the same result.
+            if (crypto->regeneratePublicKey(config.security.public_key.bytes, config.security.private_key.bytes)) {
+                keygenSuccess = true;
+            }
+
+        } else {
+            LOG_INFO("Generate new PKI keys");
+            crypto->generateKeyPair(config.security.public_key.bytes, config.security.private_key.bytes);
+            keygenSuccess = true;
+        }
+        if (keygenSuccess) {
+            config.security.public_key.size = 32;
+            config.security.private_key.size = 32;
+            owner.public_key.size = 32;
+            memcpy(owner.public_key.bytes, config.security.public_key.bytes, 32);
+        }
+    }
+#endif
+    config.lora.tx_enabled = true;
+    initRegion();
+    if (myRegion->dutyCycle < 100) {
+        config.lora.ignore_mqtt = true; // Ignore MQTT by default if region has a duty cycle limit
+    }
+
+    if (strncmp(moduleConfig.mqtt.root, default_mqtt_root, strlen(default_mqtt_root)) == 0) {
+        //  Default broker is in use, so subscribe to the appropriate MQTT root topic for this region
+        sprintf(moduleConfig.mqtt.root, "%s/%s", default_mqtt_root, myRegion->name);
+        changes |= SEGMENT_MODULECONFIG;
+    }
+
+    service->reloadConfig(changes);
+    rebootAtMsec = (millis() + DEFAULT_REBOOT_SECONDS * 1000);
+}
+
+uint8_t menuHandler::loraRegionOptionCount()
+{
+    return static_cast<uint8_t>(regionOptionCount - 1); // exclude the OLED picker's "Back" entry
+}
+
+const char *menuHandler::loraRegionOptionName(uint8_t idx)
+{
+    return regionOptions[idx + 1].label;
+}
+
+meshtastic_Config_LoRaConfig_RegionCode menuHandler::loraRegionOptionValue(uint8_t idx)
+{
+    return regionOptions[idx + 1].value;
+}
+
 void menuHandler::LoraRegionPicker(uint32_t duration)
 {
-    static const LoraRegionOption regionOptions[] = {
-        {"Back", OptionsAction::Back},
-        {"US", OptionsAction::Select, meshtastic_Config_LoRaConfig_RegionCode_US},
-        {"EU_433", OptionsAction::Select, meshtastic_Config_LoRaConfig_RegionCode_EU_433},
-        {"EU_868", OptionsAction::Select, meshtastic_Config_LoRaConfig_RegionCode_EU_868},
-        {"CN", OptionsAction::Select, meshtastic_Config_LoRaConfig_RegionCode_CN},
-        {"JP", OptionsAction::Select, meshtastic_Config_LoRaConfig_RegionCode_JP},
-        {"ANZ", OptionsAction::Select, meshtastic_Config_LoRaConfig_RegionCode_ANZ},
-        {"KR", OptionsAction::Select, meshtastic_Config_LoRaConfig_RegionCode_KR},
-        {"TW", OptionsAction::Select, meshtastic_Config_LoRaConfig_RegionCode_TW},
-        {"RU", OptionsAction::Select, meshtastic_Config_LoRaConfig_RegionCode_RU},
-        {"IN", OptionsAction::Select, meshtastic_Config_LoRaConfig_RegionCode_IN},
-        {"NZ_865", OptionsAction::Select, meshtastic_Config_LoRaConfig_RegionCode_NZ_865},
-        {"TH", OptionsAction::Select, meshtastic_Config_LoRaConfig_RegionCode_TH},
-        {"LORA_24", OptionsAction::Select, meshtastic_Config_LoRaConfig_RegionCode_LORA_24},
-        {"UA_433", OptionsAction::Select, meshtastic_Config_LoRaConfig_RegionCode_UA_433},
-        {"UA_868", OptionsAction::Select, meshtastic_Config_LoRaConfig_RegionCode_UA_868},
-        {"MY_433", OptionsAction::Select, meshtastic_Config_LoRaConfig_RegionCode_MY_433},
-        {"MY_919", OptionsAction::Select, meshtastic_Config_LoRaConfig_RegionCode_MY_919},
-        {"SG_923", OptionsAction::Select, meshtastic_Config_LoRaConfig_RegionCode_SG_923},
-        {"PH_433", OptionsAction::Select, meshtastic_Config_LoRaConfig_RegionCode_PH_433},
-        {"PH_868", OptionsAction::Select, meshtastic_Config_LoRaConfig_RegionCode_PH_868},
-        {"PH_915", OptionsAction::Select, meshtastic_Config_LoRaConfig_RegionCode_PH_915},
-        {"ANZ_433", OptionsAction::Select, meshtastic_Config_LoRaConfig_RegionCode_ANZ_433},
-        {"KZ_433", OptionsAction::Select, meshtastic_Config_LoRaConfig_RegionCode_KZ_433},
-        {"KZ_863", OptionsAction::Select, meshtastic_Config_LoRaConfig_RegionCode_KZ_863},
-        {"NP_865", OptionsAction::Select, meshtastic_Config_LoRaConfig_RegionCode_NP_865},
-        {"BR_902", OptionsAction::Select, meshtastic_Config_LoRaConfig_RegionCode_BR_902},
-    };
-
-    constexpr size_t regionCount = sizeof(regionOptions) / sizeof(regionOptions[0]);
-    static std::array<const char *, regionCount> regionLabels{};
+    static std::array<const char *, regionOptionCount> regionLabels{};
 
     const char *bannerMessage = "Set the LoRa region";
     if (currentResolution == ScreenResolution::UltraLow) {
@@ -190,59 +285,13 @@ void menuHandler::LoraRegionPicker(uint32_t duration)
             if (!option.hasValue) {
                 return;
             }
-
-            auto selectedRegion = option.value;
-            if (config.lora.region == selectedRegion) {
-                return;
-            }
-
-            config.lora.region = selectedRegion;
-            auto changes = SEGMENT_CONFIG;
-
-        // FIXME: This should be a method consolidated with the same logic in the admin message as well
-        // This is needed as we wait til picking the LoRa region to generate keys for the first time.
-#if !(MESHTASTIC_EXCLUDE_PKI_KEYGEN || MESHTASTIC_EXCLUDE_PKI)
-            if (!owner.is_licensed) {
-                bool keygenSuccess = false;
-                if (config.security.private_key.size == 32) {
-                    // public key is derived from private, so this will always have the same result.
-                    if (crypto->regeneratePublicKey(config.security.public_key.bytes, config.security.private_key.bytes)) {
-                        keygenSuccess = true;
-                    }
-
-                } else {
-                    LOG_INFO("Generate new PKI keys");
-                    crypto->generateKeyPair(config.security.public_key.bytes, config.security.private_key.bytes);
-                    keygenSuccess = true;
-                }
-                if (keygenSuccess) {
-                    config.security.public_key.size = 32;
-                    config.security.private_key.size = 32;
-                    owner.public_key.size = 32;
-                    memcpy(owner.public_key.bytes, config.security.public_key.bytes, 32);
-                }
-            }
-#endif
-            config.lora.tx_enabled = true;
-            initRegion();
-            if (myRegion->dutyCycle < 100) {
-                config.lora.ignore_mqtt = true; // Ignore MQTT by default if region has a duty cycle limit
-            }
-
-            if (strncmp(moduleConfig.mqtt.root, default_mqtt_root, strlen(default_mqtt_root)) == 0) {
-                //  Default broker is in use, so subscribe to the appropriate MQTT root topic for this region
-                sprintf(moduleConfig.mqtt.root, "%s/%s", default_mqtt_root, myRegion->name);
-                changes |= SEGMENT_MODULECONFIG;
-            }
-
-            service->reloadConfig(changes);
-            rebootAtMsec = (millis() + DEFAULT_REBOOT_SECONDS * 1000);
+            menuHandler::applyLoraRegion(option.value);
         });
 
     bannerOptions.durationMs = duration;
 
     int initialSelection = 0;
-    for (size_t i = 0; i < regionCount; ++i) {
+    for (size_t i = 0; i < regionOptionCount; ++i) {
         if (regionOptions[i].hasValue && regionOptions[i].value == config.lora.region) {
             initialSelection = static_cast<int>(i);
             break;
@@ -253,43 +302,71 @@ void menuHandler::LoraRegionPicker(uint32_t duration)
     screen->showOverlayBanner(bannerOptions);
 }
 
+void menuHandler::applyDeviceRole(meshtastic_Config_DeviceConfig_Role role)
+{
+    config.device.role = role;
+    service->reloadConfig(SEGMENT_CONFIG);
+    rebootAtMsec = (millis() + DEFAULT_REBOOT_SECONDS * 1000);
+}
+
+uint8_t menuHandler::deviceRoleOptionCount()
+{
+    return static_cast<uint8_t>(roleOptionCount);
+}
+
+const char *menuHandler::deviceRoleOptionName(uint8_t idx)
+{
+    return roleNames[idx];
+}
+
+meshtastic_Config_DeviceConfig_Role menuHandler::deviceRoleOptionValue(uint8_t idx)
+{
+    return roleValues[idx];
+}
+
 void menuHandler::deviceRolePicker()
 {
-    static const char *optionsArray[] = {"Back", "Client", "Client Mute", "Lost and Found", "Tracker"};
-    enum optionsNumbers {
-        Back = 0,
-        devicerole_client = 1,
-        devicerole_clientmute = 2,
-        devicerole_lostandfound = 3,
-        devicerole_tracker = 4
-    };
+    static const char *optionsArray[] = {"Back", roleNames[0], roleNames[1], roleNames[2], roleNames[3]};
+    enum optionsNumbers { Back = 0 };
     BannerOverlayOptions bannerOptions;
     bannerOptions.message = "Device Role";
     bannerOptions.optionsArrayPtr = optionsArray;
-    bannerOptions.optionsCount = 5;
+    bannerOptions.optionsCount = static_cast<uint8_t>(1 + roleOptionCount);
     bannerOptions.bannerCallback = [](int selected) -> void {
         if (selected == Back) {
             menuHandler::menuQueue = menuHandler::LoraMenu;
             screen->runNow();
             return;
-        } else if (selected == devicerole_client) {
-            config.device.role = meshtastic_Config_DeviceConfig_Role_CLIENT;
-        } else if (selected == devicerole_clientmute) {
-            config.device.role = meshtastic_Config_DeviceConfig_Role_CLIENT_MUTE;
-        } else if (selected == devicerole_lostandfound) {
-            config.device.role = meshtastic_Config_DeviceConfig_Role_LOST_AND_FOUND;
-        } else if (selected == devicerole_tracker) {
-            config.device.role = meshtastic_Config_DeviceConfig_Role_TRACKER;
         }
-        service->reloadConfig(SEGMENT_CONFIG);
-        rebootAtMsec = (millis() + DEFAULT_REBOOT_SECONDS * 1000);
+        menuHandler::applyDeviceRole(roleValues[selected - 1]);
     };
     screen->showOverlayBanner(bannerOptions);
 }
 
+void menuHandler::applyTxPower(int8_t dbm)
+{
+    config.lora.tx_power = dbm;
+    service->reloadConfig(SEGMENT_CONFIG);
+}
+
+uint8_t menuHandler::txPowerOptionCount()
+{
+    return static_cast<uint8_t>(txPowerOptionCountVal);
+}
+
+const char *menuHandler::txPowerOptionName(uint8_t idx)
+{
+    return txPowerNames[idx];
+}
+
+int8_t menuHandler::txPowerOptionDbm(uint8_t idx)
+{
+    return txPowerDbmTable[idx];
+}
+
 void menuHandler::txPowerPicker()
 {
-    // Entry 0 is "Back"; every later entry maps 1:1 onto txPowerDbm below.
+    // Entry 0 is "Back"; every later entry maps 1:1 onto txPowerDbmTable below.
     // The low steps match the ExpressLRS power_values rows used by getDACandDB()
     // on DAC-controlled PA boards (10/25/50 mW = DAC 30/40/50).
     // Labels are true dBm -> mW conversions. The previous ones were empirical readings from a
@@ -299,8 +376,9 @@ void menuHandler::txPowerPicker()
                                          "100 mW (20 dBm)", "126 mW (21 dBm)", "158 mW (22 dBm)", "200 mW (23 dBm)",
                                          "251 mW (24 dBm)", "316 mW (25 dBm)", "398 mW (26 dBm)", "501 mW (27 dBm)",
                                          "631 mW (28 dBm)"};
-    static const int8_t txPowerDbm[] = {0, 10, 14, 17, 20, 21, 22, 23, 24, 25, 26, 27, 28};
     const int optionsCount = sizeof(optionsArray) / sizeof(optionsArray[0]);
+    static_assert(sizeof(optionsArray) / sizeof(optionsArray[0]) == txPowerOptionCountVal + 1,
+                  "txPowerPicker labels must match the shared txPowerDbmTable 1:1 (plus Back)");
     enum optionsNumbers { Back = 0 };
     BannerOverlayOptions bannerOptions;
     bannerOptions.message = "TX Output Power";
@@ -309,7 +387,7 @@ void menuHandler::txPowerPicker()
     // Pre-select current setting, falling back to Back when tx_power is unset or off-list
     bannerOptions.InitialSelected = Back;
     for (int i = 1; i < optionsCount; i++) {
-        if (txPowerDbm[i] == config.lora.tx_power) {
+        if (txPowerDbmTable[i - 1] == config.lora.tx_power) {
             bannerOptions.InitialSelected = i;
             break;
         }
@@ -320,8 +398,7 @@ void menuHandler::txPowerPicker()
             screen->runNow();
             return;
         }
-        config.lora.tx_power = txPowerDbm[selected];
-        service->reloadConfig(SEGMENT_CONFIG);
+        menuHandler::applyTxPower(txPowerDbmTable[selected - 1]);
     };
     screen->showOverlayBanner(bannerOptions);
 }
@@ -340,18 +417,11 @@ void menuHandler::FrequencySlotPicker()
     optionsArray[options] = "Slot 0 (Auto)";
     optionsEnumArray[options++] = 0;
 
-    // Calculate number of channels (copied from RadioInterface::applyModemConfig())
-    meshtastic_Config_LoRaConfig &loraConfig = config.lora;
-    double bw = loraConfig.use_preset ? modemPresetToBwKHz(loraConfig.modem_preset, myRegion->wideLora)
-                                      : bwCodeToKHz(loraConfig.bandwidth);
-
-    uint32_t numChannels = 0;
-    if (myRegion) {
-        numChannels = (uint32_t)floor((myRegion->freqEnd - myRegion->freqStart) / (myRegion->spacing + (bw / 1000.0)));
-    } else {
+    if (!myRegion) {
         LOG_WARN("Region not set, cannot calculate number of channels");
         return;
     }
+    uint32_t numChannels = computeLoraNumChannels();
 
     if (numChannels > (uint32_t)(MAX_CHANNEL_OPTIONS - 2))
         numChannels = (uint32_t)(MAX_CHANNEL_OPTIONS - 2);
@@ -381,30 +451,59 @@ void menuHandler::FrequencySlotPicker()
             return;
         }
 
-        config.lora.channel_num = selected;
-        service->reloadConfig(SEGMENT_CONFIG);
-        rebootAtMsec = (millis() + DEFAULT_REBOOT_SECONDS * 1000);
+        menuHandler::applyFrequencySlot((uint32_t)selected);
     };
 
     screen->showOverlayBanner(bannerOptions);
 }
 
+uint32_t menuHandler::computeLoraNumChannels()
+{
+    // Mirrors RadioInterface::applyModemConfig()'s channel count calculation.
+    if (!myRegion) {
+        LOG_WARN("Region not set, cannot calculate number of channels");
+        return 0;
+    }
+    meshtastic_Config_LoRaConfig &loraConfig = config.lora;
+    double bw = loraConfig.use_preset ? modemPresetToBwKHz(loraConfig.modem_preset, myRegion->wideLora)
+                                      : bwCodeToKHz(loraConfig.bandwidth);
+    return (uint32_t)floor((myRegion->freqEnd - myRegion->freqStart) / (myRegion->spacing + (bw / 1000.0)));
+}
+
+void menuHandler::applyFrequencySlot(uint32_t slot)
+{
+    config.lora.channel_num = slot;
+    service->reloadConfig(SEGMENT_CONFIG);
+    rebootAtMsec = (millis() + DEFAULT_REBOOT_SECONDS * 1000);
+}
+
+void menuHandler::applyModemPreset(meshtastic_Config_LoRaConfig_ModemPreset preset)
+{
+    config.lora.modem_preset = preset;
+    config.lora.channel_num = 0;        // Reset to default channel for the preset
+    config.lora.override_frequency = 0; // Clear any custom frequency
+    service->reloadConfig(SEGMENT_CONFIG);
+    rebootAtMsec = (millis() + DEFAULT_REBOOT_SECONDS * 1000);
+}
+
+uint8_t menuHandler::modemPresetOptionCount()
+{
+    return static_cast<uint8_t>(presetOptionCount - 1); // exclude the OLED picker's "Back" entry
+}
+
+const char *menuHandler::modemPresetOptionName(uint8_t idx)
+{
+    return presetOptions[idx + 1].label;
+}
+
+meshtastic_Config_LoRaConfig_ModemPreset menuHandler::modemPresetOptionValue(uint8_t idx)
+{
+    return presetOptions[idx + 1].value;
+}
+
 void menuHandler::radioPresetPicker()
 {
-    static const RadioPresetOption presetOptions[] = {
-        {"Back", OptionsAction::Back},
-        {"LongTurbo", OptionsAction::Select, meshtastic_Config_LoRaConfig_ModemPreset_LONG_TURBO},
-        {"LongModerate", OptionsAction::Select, meshtastic_Config_LoRaConfig_ModemPreset_LONG_MODERATE},
-        {"LongFast", OptionsAction::Select, meshtastic_Config_LoRaConfig_ModemPreset_LONG_FAST},
-        {"MediumSlow", OptionsAction::Select, meshtastic_Config_LoRaConfig_ModemPreset_MEDIUM_SLOW},
-        {"MediumFast", OptionsAction::Select, meshtastic_Config_LoRaConfig_ModemPreset_MEDIUM_FAST},
-        {"ShortSlow", OptionsAction::Select, meshtastic_Config_LoRaConfig_ModemPreset_SHORT_SLOW},
-        {"ShortFast", OptionsAction::Select, meshtastic_Config_LoRaConfig_ModemPreset_SHORT_FAST},
-        {"ShortTurbo", OptionsAction::Select, meshtastic_Config_LoRaConfig_ModemPreset_SHORT_TURBO},
-    };
-
-    constexpr size_t presetCount = sizeof(presetOptions) / sizeof(presetOptions[0]);
-    static std::array<const char *, presetCount> presetLabels{};
+    static std::array<const char *, presetOptionCount> presetLabels{};
 
     auto bannerOptions =
         createStaticBannerOptions("Radio Preset", presetOptions, presetLabels, [](const RadioPresetOption &option, int) -> void {
@@ -418,11 +517,7 @@ void menuHandler::radioPresetPicker()
                 return;
             }
 
-            config.lora.modem_preset = option.value;
-            config.lora.channel_num = 0;        // Reset to default channel for the preset
-            config.lora.override_frequency = 0; // Clear any custom frequency
-            service->reloadConfig(SEGMENT_CONFIG);
-            rebootAtMsec = (millis() + DEFAULT_REBOOT_SECONDS * 1000);
+            menuHandler::applyModemPreset(option.value);
         });
 
     screen->showOverlayBanner(bannerOptions);
@@ -2023,6 +2118,16 @@ void menuHandler::GPSPositionBroadcastMenu()
 
 #endif
 
+// Goes through the same INPUT_BROKER_MSG_BLUETOOTH_TOGGLE path as a physical Fn+B keypress
+// (see SystemCommandsModule), so BT enable/disable/reboot handling isn't duplicated here.
+void menuHandler::setBluetoothEnabled(bool enable)
+{
+    if (enable != config.bluetooth.enabled) {
+        InputEvent event = {.inputEvent = (input_broker_event)170, .kbchar = 170, .touchX = 0, .touchY = 0};
+        inputBroker->injectInputEvent(&event);
+    }
+}
+
 void menuHandler::bluetoothToggleMenu()
 {
     static const char *optionsArray[] = {"Back", "Enabled", "Disabled"};
@@ -2036,10 +2141,7 @@ void menuHandler::bluetoothToggleMenu()
     bannerOptions.bannerCallback = [](int selected) -> void {
         if (selected == 0)
             return;
-        else if (selected != (config.bluetooth.enabled ? 1 : 2)) {
-            InputEvent event = {.inputEvent = (input_broker_event)170, .kbchar = 170, .touchX = 0, .touchY = 0};
-            inputBroker->injectInputEvent(&event);
-        }
+        menuHandler::setBluetoothEnabled(selected == 1);
     };
     bannerOptions.InitialSelected = config.bluetooth.enabled ? 1 : 2;
     screen->showOverlayBanner(bannerOptions);
@@ -2229,6 +2331,14 @@ void menuHandler::TFTColorPickerMenu(OLEDDisplay *display)
     screen->showOverlayBanner(bannerOptions);
 }
 
+void menuHandler::requestReboot()
+{
+    IF_SCREEN(screen->showSimpleBanner("Rebooting...", 0));
+    nodeDB->saveToDisk();
+    messageStore.saveToFlash();
+    rebootAtMsec = millis() + DEFAULT_REBOOT_SECONDS * 1000;
+}
+
 void menuHandler::rebootMenu()
 {
     static const char *optionsArray[] = {"Back", "Confirm"};
@@ -2241,16 +2351,19 @@ void menuHandler::rebootMenu()
     bannerOptions.optionsCount = 2;
     bannerOptions.bannerCallback = [](int selected) -> void {
         if (selected == 1) {
-            IF_SCREEN(screen->showSimpleBanner("Rebooting...", 0));
-            nodeDB->saveToDisk();
-            messageStore.saveToFlash();
-            rebootAtMsec = millis() + DEFAULT_REBOOT_SECONDS * 1000;
+            menuHandler::requestReboot();
         } else {
             menuQueue = PowerMenu;
             screen->runNow();
         }
     };
     screen->showOverlayBanner(bannerOptions);
+}
+
+void menuHandler::requestShutdown()
+{
+    InputEvent event = {.inputEvent = (input_broker_event)INPUT_BROKER_SHUTDOWN, .kbchar = 0, .touchX = 0, .touchY = 0};
+    inputBroker->injectInputEvent(&event);
 }
 
 void menuHandler::shutdownMenu()
@@ -2265,8 +2378,7 @@ void menuHandler::shutdownMenu()
     bannerOptions.optionsCount = 2;
     bannerOptions.bannerCallback = [](int selected) -> void {
         if (selected == 1) {
-            InputEvent event = {.inputEvent = (input_broker_event)INPUT_BROKER_SHUTDOWN, .kbchar = 0, .touchX = 0, .touchY = 0};
-            inputBroker->injectInputEvent(&event);
+            menuHandler::requestShutdown();
         } else {
             menuQueue = PowerMenu;
             screen->runNow();
@@ -2375,6 +2487,16 @@ void menuHandler::wifiBaseMenu()
     screen->showOverlayBanner(bannerOptions);
 }
 
+#if HAS_WIFI
+void menuHandler::setWifiEnabled(bool enable)
+{
+    config.network.wifi_enabled = enable;
+    config.bluetooth.enabled = !enable;
+    service->reloadConfig(SEGMENT_CONFIG);
+    rebootAtMsec = (millis() + DEFAULT_REBOOT_SECONDS * 1000);
+}
+#endif
+
 void menuHandler::wifiToggleMenu()
 {
     enum optionsNumbers { Back, Wifi_disable, Wifi_enable };
@@ -2390,21 +2512,23 @@ void menuHandler::wifiToggleMenu()
         bannerOptions.InitialSelected = 1;
     bannerOptions.bannerCallback = [](int selected) -> void {
         if (selected == Wifi_disable) {
-            config.network.wifi_enabled = false;
-            config.bluetooth.enabled = true;
-            service->reloadConfig(SEGMENT_CONFIG);
-            rebootAtMsec = (millis() + DEFAULT_REBOOT_SECONDS * 1000);
+            menuHandler::setWifiEnabled(false);
         } else if (selected == Wifi_enable) {
-            config.network.wifi_enabled = true;
-            config.bluetooth.enabled = false;
-            service->reloadConfig(SEGMENT_CONFIG);
-            rebootAtMsec = (millis() + DEFAULT_REBOOT_SECONDS * 1000);
+            menuHandler::setWifiEnabled(true);
         }
     };
     screen->showOverlayBanner(bannerOptions);
 }
 
 #ifdef RF95_FAN_EN
+void menuHandler::setFanMode(FanMode mode)
+{
+    fanMode = mode;
+    // Nothing about the lora config actually changed; this just re-triggers reconfigure()
+    // so RF95Interface re-evaluates the fan pin against the new mode immediately.
+    service->reloadConfig(SEGMENT_CONFIG);
+}
+
 void menuHandler::fanToggleMenu()
 {
     enum optionsNumbers { Back, Fan_auto, Fan_forceOn, Fan_forceOff };
@@ -2427,22 +2551,25 @@ void menuHandler::fanToggleMenu()
     }
     bannerOptions.bannerCallback = [](int selected) -> void {
         if (selected == Fan_auto)
-            fanMode = FanMode::Auto;
+            menuHandler::setFanMode(FanMode::Auto);
         else if (selected == Fan_forceOn)
-            fanMode = FanMode::ForceOn;
+            menuHandler::setFanMode(FanMode::ForceOn);
         else if (selected == Fan_forceOff)
-            fanMode = FanMode::ForceOff;
-        else
-            return;
-        // Nothing about the lora config actually changed; this just re-triggers reconfigure()
-        // so RF95Interface re-evaluates the fan pin against the new mode immediately.
-        service->reloadConfig(SEGMENT_CONFIG);
+            menuHandler::setFanMode(FanMode::ForceOff);
     };
     screen->showOverlayBanner(bannerOptions);
 }
 #endif
 
 #ifdef EMAX_900_TX_OLED
+void menuHandler::setSyncWord(uint8_t word)
+{
+    saveEmaxSyncWord(word);
+    // Nothing about the lora config actually changed; this just re-triggers reconfigure()
+    // so RF95Interface re-applies the new sync word to the radio immediately.
+    service->reloadConfig(SEGMENT_CONFIG);
+}
+
 void menuHandler::syncWordMenu()
 {
     enum optionsNumbers { Back, Standard, Compat };
@@ -2455,14 +2582,9 @@ void menuHandler::syncWordMenu()
     bannerOptions.InitialSelected = (emaxSyncWord == 0x12) ? Compat : Standard;
     bannerOptions.bannerCallback = [](int selected) -> void {
         if (selected == Standard)
-            saveEmaxSyncWord(0x2b);
+            menuHandler::setSyncWord(0x2b);
         else if (selected == Compat)
-            saveEmaxSyncWord(0x12);
-        else
-            return;
-        // Nothing about the lora config actually changed; this just re-triggers reconfigure()
-        // so RF95Interface re-applies the new sync word to the radio immediately.
-        service->reloadConfig(SEGMENT_CONFIG);
+            menuHandler::setSyncWord(0x12);
     };
     screen->showOverlayBanner(bannerOptions);
 }
@@ -2614,6 +2736,25 @@ void menuHandler::powerMenu()
 }
 
 #ifdef EMAX_900_TX_OLED
+// Also persists nodeDB/messageStore before the reboot now (the OLED path didn't before this
+// refactor); the CRSF Lua command needs that same safety net and there's no reason the OLED
+// path shouldn't have it too.
+bool menuHandler::switchToOtherFirmwareSlot()
+{
+    const esp_partition_t *running = esp_ota_get_running_partition();
+    esp_partition_subtype_t targetSub = (running->subtype == ESP_PARTITION_SUBTYPE_APP_OTA_0)
+                                            ? ESP_PARTITION_SUBTYPE_APP_OTA_1
+                                            : ESP_PARTITION_SUBTYPE_APP_OTA_0;
+    const esp_partition_t *target = esp_partition_find_first(ESP_PARTITION_TYPE_APP, targetSub, NULL);
+    if (!target || esp_ota_set_boot_partition(target) != ESP_OK) {
+        return false;
+    }
+    nodeDB->saveToDisk();
+    messageStore.saveToFlash();
+    rebootAtMsec = millis() + 2000;
+    return true;
+}
+
 void menuHandler::changeSlotMenu()
 {
     static const char *optionsArray[] = {"Cancel", "Change Slot"};
@@ -2623,14 +2764,8 @@ void menuHandler::changeSlotMenu()
     bannerOptions.optionsCount = 2;
     bannerOptions.bannerCallback = [](int selected) -> void {
         if (selected == 1) {
-            const esp_partition_t *running = esp_ota_get_running_partition();
-            esp_partition_subtype_t targetSub = (running->subtype == ESP_PARTITION_SUBTYPE_APP_OTA_0)
-                                                    ? ESP_PARTITION_SUBTYPE_APP_OTA_1
-                                                    : ESP_PARTITION_SUBTYPE_APP_OTA_0;
-            const esp_partition_t *target = esp_partition_find_first(ESP_PARTITION_TYPE_APP, targetSub, NULL);
-            if (target && esp_ota_set_boot_partition(target) == ESP_OK) {
+            if (menuHandler::switchToOtherFirmwareSlot()) {
                 IF_SCREEN(screen->showSimpleBanner("Switching slot...", 0));
-                rebootAtMsec = millis() + 2000;
             }
         } else {
             menuQueue = PowerMenu;

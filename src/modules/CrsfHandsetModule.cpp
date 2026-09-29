@@ -8,6 +8,7 @@
 #include "NodeDB.h"
 #include "MessageStore.h"
 #include "Throttle.h"
+#include "graphics/draw/MenuHandler.h"
 #include "mesh/MeshTypes.h"
 #include "mesh/Router.h"
 #include "mesh/generated/meshtastic/cannedmessages.pb.h"
@@ -20,6 +21,12 @@
 #include <esp_system.h>
 #include <esp_rom_gpio.h>
 #include <soc/gpio_sig_map.h>
+#ifdef RF95_FAN_EN
+#include "mesh/FanControl.h"
+#endif
+#ifdef EMAX_900_TX_OLED
+#include "mesh/SyncWordOverride.h"
+#endif
 
 // CannedMessageModuleConfig is a plain global (not declared in a header) owned by CannedMessageModule.cpp,
 // which only builds under this same guard (see Modules.cpp).
@@ -40,7 +47,8 @@ constexpr uint8_t CRSF_PARAM_TYPE_FOLDER = 11;
 constexpr uint8_t CRSF_PARAM_TYPE_INFO = 12;
 constexpr uint8_t CRSF_PARAM_TYPE_COMMAND = 13;
 // Root order (id order == Lua display order within a parent): Message, Send, Messages folder,
-// Nodes folder, Refresh, Version; message/node blocks and each folder's own Refresh sit off to the side.
+// Nodes folder, Settings folder, Refresh, Version; message/node/settings blocks and each folder's
+// own Refresh sit off to the side (their ids only need to sort within their own parent).
 constexpr uint8_t CRSF_FIELD_MESSAGE_SELECT = 1;
 constexpr uint8_t CRSF_FIELD_SEND = 2;
 constexpr uint8_t CRSF_FIELD_MESSAGES_FOLDER = 3;
@@ -53,10 +61,50 @@ constexpr uint8_t CRSF_MSG_BLOCK_SIZE = CRSF_MSG_ROW_COUNT + 1; // folder id + 1
 constexpr uint8_t CRSF_MSG_SLOT_COUNT = 5;
 constexpr uint8_t CRSF_FIELD_NODES_FOLDER = CRSF_FIELD_MSG_BASE + CRSF_MSG_SLOT_COUNT * CRSF_MSG_BLOCK_SIZE; // 60
 constexpr uint8_t CRSF_FIELD_NODES_REFRESH = CRSF_FIELD_NODES_FOLDER + 1; // 61, child of NODES_FOLDER
-constexpr uint8_t CRSF_FIELD_ROOT_REFRESH = CRSF_FIELD_NODES_REFRESH + 1; // 62, root
-constexpr uint8_t CRSF_FIELD_VERSION = CRSF_FIELD_ROOT_REFRESH + 1; // 63, root
-constexpr uint8_t CRSF_FIELD_MSG_EMPTY = CRSF_FIELD_VERSION + 1; // 64, child of MESSAGES_FOLDER
-constexpr uint8_t CRSF_FIELD_STATIC_COUNT = CRSF_FIELD_MSG_EMPTY; // ids 1..64 always present, regardless of nodeCount
+
+// Settings folder: children are listed in menuHandler's Region/Preset/Slot/TxPower/Role/BT/[WiFi]/
+// [SyncWord]/[Fan]/Reboot/["Boot ELRS"]/Shutdown order via its own explicit child-id list (built in
+// buildParameterEntryBody), independent of these ids' numeric order. Optional fields are only present
+// (and only take an id) on boards that build them, keeping fieldCnt accurate per board.
+constexpr uint8_t CRSF_FIELD_SETTINGS_FOLDER = CRSF_FIELD_NODES_REFRESH + 1; // 62, root
+constexpr uint8_t CRSF_FIELD_SETTINGS_BASE = CRSF_FIELD_SETTINGS_FOLDER + 1;
+constexpr uint8_t CRSF_FIELD_SET_REGION = CRSF_FIELD_SETTINGS_BASE;
+constexpr uint8_t CRSF_FIELD_SET_PRESET = CRSF_FIELD_SET_REGION + 1;
+constexpr uint8_t CRSF_FIELD_SET_SLOT = CRSF_FIELD_SET_PRESET + 1;
+constexpr uint8_t CRSF_FIELD_SET_TXPOWER = CRSF_FIELD_SET_SLOT + 1;
+constexpr uint8_t CRSF_FIELD_SET_ROLE = CRSF_FIELD_SET_TXPOWER + 1;
+constexpr uint8_t CRSF_FIELD_SET_BT = CRSF_FIELD_SET_ROLE + 1;
+#if HAS_WIFI
+constexpr uint8_t CRSF_FIELD_SET_WIFI = CRSF_FIELD_SET_BT + 1;
+constexpr uint8_t CRSF_FIELD_SETTINGS_AFTER_WIFI = CRSF_FIELD_SET_WIFI + 1;
+#else
+constexpr uint8_t CRSF_FIELD_SETTINGS_AFTER_WIFI = CRSF_FIELD_SET_BT + 1;
+#endif
+#ifdef EMAX_900_TX_OLED
+constexpr uint8_t CRSF_FIELD_SET_SYNCWORD = CRSF_FIELD_SETTINGS_AFTER_WIFI;
+constexpr uint8_t CRSF_FIELD_SETTINGS_AFTER_SYNC = CRSF_FIELD_SET_SYNCWORD + 1;
+#else
+constexpr uint8_t CRSF_FIELD_SETTINGS_AFTER_SYNC = CRSF_FIELD_SETTINGS_AFTER_WIFI;
+#endif
+#ifdef RF95_FAN_EN
+constexpr uint8_t CRSF_FIELD_SET_FAN = CRSF_FIELD_SETTINGS_AFTER_SYNC;
+constexpr uint8_t CRSF_FIELD_SETTINGS_AFTER_FAN = CRSF_FIELD_SET_FAN + 1;
+#else
+constexpr uint8_t CRSF_FIELD_SETTINGS_AFTER_FAN = CRSF_FIELD_SETTINGS_AFTER_SYNC;
+#endif
+constexpr uint8_t CRSF_FIELD_SET_REBOOT = CRSF_FIELD_SETTINGS_AFTER_FAN;
+#ifdef EMAX_900_TX_OLED
+constexpr uint8_t CRSF_FIELD_SET_BOOT_ELRS = CRSF_FIELD_SET_REBOOT + 1;
+constexpr uint8_t CRSF_FIELD_SET_SHUTDOWN = CRSF_FIELD_SET_BOOT_ELRS + 1;
+#else
+constexpr uint8_t CRSF_FIELD_SET_SHUTDOWN = CRSF_FIELD_SET_REBOOT + 1;
+#endif
+constexpr uint8_t CRSF_FIELD_SETTINGS_LAST = CRSF_FIELD_SET_SHUTDOWN; // last settings child id (inclusive)
+
+constexpr uint8_t CRSF_FIELD_ROOT_REFRESH = CRSF_FIELD_SETTINGS_LAST + 1; // root
+constexpr uint8_t CRSF_FIELD_VERSION = CRSF_FIELD_ROOT_REFRESH + 1; // root
+constexpr uint8_t CRSF_FIELD_MSG_EMPTY = CRSF_FIELD_VERSION + 1; // child of MESSAGES_FOLDER
+constexpr uint8_t CRSF_FIELD_STATIC_COUNT = CRSF_FIELD_MSG_EMPTY; // ids 1..STATIC_COUNT always present
 // Each node gets an 8-id block: the folder itself, then 7 fixed-id INFO rows (Name/Id/SNR/Heard/Hops/HW/Bat).
 constexpr uint8_t CRSF_FIELD_NODES_BASE = CRSF_FIELD_STATIC_COUNT + 1; // first node folder's field id; node k's folder = BASE + 8*k
 constexpr uint8_t CRSF_FIELD_NODE_BLOCK_SIZE = 8;
@@ -65,9 +113,18 @@ constexpr uint8_t CRSF_NODE_ROW_COUNT = 7;
 constexpr uint8_t CRSF_LCS_IDLE = 0;
 constexpr uint8_t CRSF_LCS_CLICK = 1;
 constexpr uint8_t CRSF_LCS_EXECUTING = 2;
+constexpr uint8_t CRSF_LCS_ASKCONFIRM = 3;
+constexpr uint8_t CRSF_LCS_CONFIRMED = 4;
 constexpr uint8_t CRSF_LCS_CANCEL = 5;
 constexpr uint8_t CRSF_CMD_TIMEOUT_10MS = 50; // Lua polls every timeout*10ms while the popup is open
 constexpr uint32_t CRSF_SEND_COOLDOWN_MS = 5000;
+
+// SELECT/UINT8 settings fields (not the trailing COMMAND fields): writes just get recorded for
+// runOnce() to apply; no reply (the Lua re-reads after a write).
+bool isSettingsValueField(uint8_t fieldId)
+{
+    return fieldId >= CRSF_FIELD_SETTINGS_BASE && fieldId < CRSF_FIELD_SET_REBOOT;
+}
 
 bool isRefreshField(uint8_t fieldId)
 {
@@ -276,6 +333,39 @@ static void appendInfoField(uint8_t *payload, uint8_t &i, const char *name, cons
     i += n;
 }
 
+// Appends a ';'-joined, NUL-terminated SELECT option list built from a graphics::menuHandler::*OptionName-style
+// accessor. Reading these tables from the UART task is safe: they're compile-time-constant, not live
+// config/NodeDB state (see the class-wide "no config reads here" rule).
+template <typename NameFn> static void appendJoinedOptions(uint8_t *payload, uint8_t &i, uint8_t count, NameFn nameFn)
+{
+    for (uint8_t k = 0; k < count; k++) {
+        const char *name = nameFn(k);
+        const size_t n = strlen(name);
+        memcpy(&payload[i], name, n);
+        i += n;
+        payload[i++] = (uint8_t)((k + 1 < count) ? ';' : '\0');
+    }
+    if (count == 0)
+        payload[i++] = '\0';
+}
+
+// Appends a SELECT field body (type, name, options, value/min/max/default/unit) for one of the fixed
+// short option lists (Bluetooth/WiFi/SyncWord/Fan): name+NUL, then opts (already ';'-joined + NUL).
+static void appendFixedSelectField(uint8_t *payload, uint8_t &i, const char *name, size_t nameSize, const char *opts,
+                                   size_t optsSize, uint8_t value, uint8_t maxIdx)
+{
+    payload[i++] = CRSF_PARAM_TYPE_SELECT;
+    memcpy(&payload[i], name, nameSize);
+    i += nameSize;
+    memcpy(&payload[i], opts, optsSize);
+    i += optsSize;
+    payload[i++] = value;
+    payload[i++] = 0; // min
+    payload[i++] = maxIdx; // max
+    payload[i++] = 0; // default
+    payload[i++] = 0; // unit ""
+}
+
 // Builds the full parameter-entry body (everything after fieldId+chunksRemain) into entryBody.
 // Returns its length. UART task only.
 uint8_t CrsfHandsetModule::buildParameterEntryBody(uint8_t fieldId)
@@ -302,6 +392,8 @@ uint8_t CrsfHandsetModule::buildParameterEntryBody(uint8_t fieldId)
         parent = CRSF_FIELD_MESSAGES_FOLDER;
     else if (fieldId == CRSF_FIELD_NODES_REFRESH)
         parent = CRSF_FIELD_NODES_FOLDER;
+    else if (fieldId >= CRSF_FIELD_SETTINGS_BASE && fieldId <= CRSF_FIELD_SETTINGS_LAST)
+        parent = CRSF_FIELD_SETTINGS_FOLDER;
     else if (inMsgRange)
         parent = (msgBlockOffset == 0) ? CRSF_FIELD_MESSAGES_FOLDER : msgFolderId;
     else if (inNodeRange)
@@ -350,6 +442,151 @@ uint8_t CrsfHandsetModule::buildParameterEntryBody(uint8_t fieldId)
             payload[i++] = CRSF_FIELD_MSG_BASE + CRSF_MSG_BLOCK_SIZE * n;
         payload[i++] = CRSF_FIELD_MSG_EMPTY;
         payload[i++] = 0xFF;
+    } else if (fieldId == CRSF_FIELD_SETTINGS_FOLDER) {
+        payload[i++] = CRSF_PARAM_TYPE_FOLDER;
+        static const char fieldName[] = "Settings";
+        memcpy(&payload[i], fieldName, sizeof(fieldName));
+        i += sizeof(fieldName);
+        // Child id list terminated by 0xFF; display order here is independent of the ids' own numeric
+        // order (see the comment above the CRSF_FIELD_SETTINGS_* constants).
+        payload[i++] = CRSF_FIELD_SET_REGION;
+        payload[i++] = CRSF_FIELD_SET_PRESET;
+        payload[i++] = CRSF_FIELD_SET_SLOT;
+        payload[i++] = CRSF_FIELD_SET_TXPOWER;
+        payload[i++] = CRSF_FIELD_SET_ROLE;
+        payload[i++] = CRSF_FIELD_SET_BT;
+#if HAS_WIFI
+        payload[i++] = CRSF_FIELD_SET_WIFI;
+#endif
+#ifdef EMAX_900_TX_OLED
+        payload[i++] = CRSF_FIELD_SET_SYNCWORD;
+#endif
+#ifdef RF95_FAN_EN
+        payload[i++] = CRSF_FIELD_SET_FAN;
+#endif
+        payload[i++] = CRSF_FIELD_SET_REBOOT;
+#ifdef EMAX_900_TX_OLED
+        payload[i++] = CRSF_FIELD_SET_BOOT_ELRS;
+#endif
+        payload[i++] = CRSF_FIELD_SET_SHUTDOWN;
+        payload[i++] = 0xFF;
+    } else if (fieldId == CRSF_FIELD_SET_REGION) {
+        static const char fieldName[] = "Region";
+        payload[i++] = CRSF_PARAM_TYPE_SELECT;
+        memcpy(&payload[i], fieldName, sizeof(fieldName));
+        i += sizeof(fieldName);
+        const uint8_t count = graphics::menuHandler::loraRegionOptionCount();
+        appendJoinedOptions(payload, i, count, graphics::menuHandler::loraRegionOptionName);
+        const uint8_t maxIdx = count > 0 ? count - 1 : 0;
+        payload[i++] = std::min<uint8_t>(snap.settings.regionIdx, maxIdx);
+        payload[i++] = 0; // min
+        payload[i++] = maxIdx; // max
+        payload[i++] = 0; // default
+        payload[i++] = 0; // unit ""
+    } else if (fieldId == CRSF_FIELD_SET_PRESET) {
+        static const char fieldName[] = "Preset";
+        payload[i++] = CRSF_PARAM_TYPE_SELECT;
+        memcpy(&payload[i], fieldName, sizeof(fieldName));
+        i += sizeof(fieldName);
+        const uint8_t count = graphics::menuHandler::modemPresetOptionCount();
+        appendJoinedOptions(payload, i, count, graphics::menuHandler::modemPresetOptionName);
+        const uint8_t maxIdx = count > 0 ? count - 1 : 0;
+        payload[i++] = std::min<uint8_t>(snap.settings.presetIdx, maxIdx);
+        payload[i++] = 0; // min
+        payload[i++] = maxIdx; // max
+        payload[i++] = 0; // default
+        payload[i++] = 0; // unit ""
+    } else if (fieldId == CRSF_FIELD_SET_SLOT) {
+        // UINT8 (type 0): 0 means "default slot", same as the OLED FrequencySlotPicker's "Slot 0 (Auto)".
+        static const char fieldName[] = "Slot";
+        payload[i++] = 0; // type 0 = UINT8
+        memcpy(&payload[i], fieldName, sizeof(fieldName));
+        i += sizeof(fieldName);
+        payload[i++] = snap.settings.slotValue;
+        payload[i++] = 0; // min
+        payload[i++] = snap.settings.slotMax; // max
+        payload[i++] = 0; // default
+        payload[i++] = 0; // unit ""
+    } else if (fieldId == CRSF_FIELD_SET_TXPOWER) {
+        static const char fieldName[] = "TX Power";
+        payload[i++] = CRSF_PARAM_TYPE_SELECT;
+        memcpy(&payload[i], fieldName, sizeof(fieldName));
+        i += sizeof(fieldName);
+        const uint8_t count = graphics::menuHandler::txPowerOptionCount();
+        appendJoinedOptions(payload, i, count, graphics::menuHandler::txPowerOptionName);
+        const uint8_t maxIdx = count > 0 ? count - 1 : 0;
+        payload[i++] = std::min<uint8_t>(snap.settings.txPowerIdx, maxIdx);
+        payload[i++] = 0; // min
+        payload[i++] = maxIdx; // max
+        payload[i++] = 0; // default
+        payload[i++] = 0; // unit ""
+    } else if (fieldId == CRSF_FIELD_SET_ROLE) {
+        static const char fieldName[] = "Role";
+        payload[i++] = CRSF_PARAM_TYPE_SELECT;
+        memcpy(&payload[i], fieldName, sizeof(fieldName));
+        i += sizeof(fieldName);
+        const uint8_t count = graphics::menuHandler::deviceRoleOptionCount();
+        appendJoinedOptions(payload, i, count, graphics::menuHandler::deviceRoleOptionName);
+        const uint8_t maxIdx = count > 0 ? count - 1 : 0;
+        payload[i++] = std::min<uint8_t>(snap.settings.roleIdx, maxIdx);
+        payload[i++] = 0; // min
+        payload[i++] = maxIdx; // max
+        payload[i++] = 0; // default
+        payload[i++] = 0; // unit ""
+    } else if (fieldId == CRSF_FIELD_SET_BT) {
+        static const char fieldName[] = "Bluetooth";
+        static const char opts[] = "Off;On";
+        appendFixedSelectField(payload, i, fieldName, sizeof(fieldName), opts, sizeof(opts), snap.settings.bluetoothOn, 1);
+#if HAS_WIFI
+    } else if (fieldId == CRSF_FIELD_SET_WIFI) {
+        static const char fieldName[] = "WiFi";
+        static const char opts[] = "Off;On";
+        appendFixedSelectField(payload, i, fieldName, sizeof(fieldName), opts, sizeof(opts), snap.settings.wifiOn, 1);
+#endif
+#ifdef EMAX_900_TX_OLED
+    } else if (fieldId == CRSF_FIELD_SET_SYNCWORD) {
+        static const char fieldName[] = "Sync Word";
+        static const char opts[] = "0x2b;0x12";
+        appendFixedSelectField(payload, i, fieldName, sizeof(fieldName), opts, sizeof(opts), snap.settings.syncWordIdx, 1);
+#endif
+#ifdef RF95_FAN_EN
+    } else if (fieldId == CRSF_FIELD_SET_FAN) {
+        static const char fieldName[] = "PA Fan";
+        static const char opts[] = "Auto;On;Off";
+        appendFixedSelectField(payload, i, fieldName, sizeof(fieldName), opts, sizeof(opts), snap.settings.fanIdx, 2);
+#endif
+    } else if (fieldId == CRSF_FIELD_SET_REBOOT) {
+        static const char fieldName[] = "Reboot";
+        static const char info[] = "Reboot?";
+        payload[i++] = CRSF_PARAM_TYPE_COMMAND;
+        memcpy(&payload[i], fieldName, sizeof(fieldName));
+        i += sizeof(fieldName);
+        payload[i++] = rebootCmdStatus.load();
+        payload[i++] = CRSF_CMD_TIMEOUT_10MS;
+        memcpy(&payload[i], info, sizeof(info));
+        i += sizeof(info);
+#ifdef EMAX_900_TX_OLED
+    } else if (fieldId == CRSF_FIELD_SET_BOOT_ELRS) {
+        static const char fieldName[] = "Boot ELRS";
+        static const char info[] = "Boot ELRS slot?";
+        payload[i++] = CRSF_PARAM_TYPE_COMMAND;
+        memcpy(&payload[i], fieldName, sizeof(fieldName));
+        i += sizeof(fieldName);
+        payload[i++] = bootElrsCmdStatus.load();
+        payload[i++] = CRSF_CMD_TIMEOUT_10MS;
+        memcpy(&payload[i], info, sizeof(info));
+        i += sizeof(info);
+#endif
+    } else if (fieldId == CRSF_FIELD_SET_SHUTDOWN) {
+        static const char fieldName[] = "Shutdown";
+        static const char info[] = "Shutdown? Replug to wake";
+        payload[i++] = CRSF_PARAM_TYPE_COMMAND;
+        memcpy(&payload[i], fieldName, sizeof(fieldName));
+        i += sizeof(fieldName);
+        payload[i++] = shutdownCmdStatus.load();
+        payload[i++] = CRSF_CMD_TIMEOUT_10MS;
+        memcpy(&payload[i], info, sizeof(info));
+        i += sizeof(info);
     } else if (isRefreshField(fieldId)) {
         // Always idle: the write handler replies immediately (see handleFrame), never leaving it executing.
         static const char fieldName[] = "Refresh";
@@ -447,6 +684,21 @@ void CrsfHandsetModule::sendEntryChunk(uint8_t destAddr, uint8_t fieldId, const 
     sendFrame(CRSF_FRAMETYPE_PARAMETER_ENTRY, destAddr, frame, 2 + sliceLen);
 }
 
+// Reboot/Shutdown/"Boot ELRS" COMMAND fields all follow the same click -> askConfirm -> confirmed/
+// cancelled flow; only the action queued on confirmation differs. UART task only (atomics only);
+// the actual action runs on the main thread once runOnce() sees `requested`.
+static void handleConfirmCommandWrite(std::atomic<uint8_t> &status, std::atomic<bool> &requested, uint8_t value)
+{
+    if (value == CRSF_LCS_CLICK) {
+        status = CRSF_LCS_ASKCONFIRM;
+    } else if (value == CRSF_LCS_CONFIRMED) {
+        status = CRSF_LCS_IDLE;
+        requested = true;
+    } else {
+        status = CRSF_LCS_IDLE;
+    }
+}
+
 void CrsfHandsetModule::handleFrame(const uint8_t *frame, uint8_t len)
 {
     // frame = [sync, len, type, dest, orig, ...payload..., crc]
@@ -504,6 +756,23 @@ void CrsfHandsetModule::handleFrame(const uint8_t *frame, uint8_t len)
             }
             // CRSF_LCS_QUERY (and anything else) just falls through to report current state below.
             sendParameterEntry(origAddr, fieldId, 0);
+        } else if (fieldId == CRSF_FIELD_SET_REBOOT) {
+            handleConfirmCommandWrite(rebootCmdStatus, rebootRequested, value);
+            sendParameterEntry(origAddr, fieldId, 0);
+#ifdef EMAX_900_TX_OLED
+        } else if (fieldId == CRSF_FIELD_SET_BOOT_ELRS) {
+            handleConfirmCommandWrite(bootElrsCmdStatus, bootElrsRequested, value);
+            sendParameterEntry(origAddr, fieldId, 0);
+#endif
+        } else if (fieldId == CRSF_FIELD_SET_SHUTDOWN) {
+            handleConfirmCommandWrite(shutdownCmdStatus, shutdownRequested, value);
+            sendParameterEntry(origAddr, fieldId, 0);
+        } else if (isSettingsValueField(fieldId)) {
+            // Applying touches config/NodeDB and may reboot, so just record it; runOnce() (main
+            // thread) applies it via the matching graphics::menuHandler:: function and refreshes the snapshot.
+            // No reply: the Lua re-reads the field itself after a write.
+            pendingSettingsField = fieldId;
+            pendingSettingsValue = value;
         }
         // Message and node folders/rows never get a PARAMETER_WRITE: opening a folder is a pure
         // Lua-local state change (fieldFolderOpen), and rows aren't editable.
@@ -788,6 +1057,7 @@ void CrsfHandsetModule::updateMeshSnapshot()
     const uint8_t writeIdx = 1 - meshSnapshotIdx.load();
     MeshSnapshot &snap = meshSnapshots[writeIdx];
 
+    buildSettingsSnapshot(writeIdx);
     buildCannedMessageOptions(snap);
 
     rebuildMessagesFromStore();
@@ -844,9 +1114,122 @@ void CrsfHandsetModule::updateMeshSnapshot()
     meshSnapshotIdx = writeIdx;
 }
 
+// Fills meshSnapshots[writeIdx].settings from config/NodeDB. Main thread only (see updateMeshSnapshot).
+void CrsfHandsetModule::buildSettingsSnapshot(uint8_t writeIdx)
+{
+    auto &st = meshSnapshots[writeIdx].settings;
+
+    st.regionIdx = 0;
+    for (uint8_t k = 0; k < graphics::menuHandler::loraRegionOptionCount(); k++) {
+        if (graphics::menuHandler::loraRegionOptionValue(k) == config.lora.region) {
+            st.regionIdx = k;
+            break;
+        }
+    }
+    st.presetIdx = 0;
+    for (uint8_t k = 0; k < graphics::menuHandler::modemPresetOptionCount(); k++) {
+        if (graphics::menuHandler::modemPresetOptionValue(k) == config.lora.modem_preset) {
+            st.presetIdx = k;
+            break;
+        }
+    }
+    st.slotValue = (uint8_t)std::min<uint32_t>(config.lora.channel_num, 255);
+    st.slotMax = (uint8_t)std::min<uint32_t>(graphics::menuHandler::computeLoraNumChannels(), 255);
+    st.txPowerIdx = 0; // falls back to the lowest step (10dBm) when tx_power is unset or off-list
+    for (uint8_t k = 0; k < graphics::menuHandler::txPowerOptionCount(); k++) {
+        if (graphics::menuHandler::txPowerOptionDbm(k) == config.lora.tx_power) {
+            st.txPowerIdx = k;
+            break;
+        }
+    }
+    st.roleIdx = 0;
+    for (uint8_t k = 0; k < graphics::menuHandler::deviceRoleOptionCount(); k++) {
+        if (graphics::menuHandler::deviceRoleOptionValue(k) == config.device.role) {
+            st.roleIdx = k;
+            break;
+        }
+    }
+    st.bluetoothOn = config.bluetooth.enabled ? 1 : 0;
+#if HAS_WIFI
+    st.wifiOn = config.network.wifi_enabled ? 1 : 0;
+#endif
+#ifdef EMAX_900_TX_OLED
+    st.syncWordIdx = (emaxSyncWord == 0x12) ? 1 : 0;
+#endif
+#ifdef RF95_FAN_EN
+    st.fanIdx = (fanMode == FanMode::ForceOn) ? 1 : (fanMode == FanMode::ForceOff) ? 2 : 0;
+#endif
+}
+
+// Applies one Settings field write via the matching graphics::menuHandler:: function (main thread only: touches
+// config/NodeDB and may reboot). Guards the reboot-inducing ones against a redundant re-confirm of the
+// same value from the Lua (leaving edit mode always re-sends, even unchanged); graphics::menuHandler::applyLoraRegion
+// already has the same no-op guard built in for the OLED picker, so it's not duplicated here.
+void CrsfHandsetModule::applyPendingSettingsWrite(uint8_t fieldId, uint8_t value)
+{
+    if (fieldId == CRSF_FIELD_SET_REGION) {
+        const uint8_t count = graphics::menuHandler::loraRegionOptionCount();
+        if (count == 0)
+            return;
+        graphics::menuHandler::applyLoraRegion(graphics::menuHandler::loraRegionOptionValue(std::min<uint8_t>(value, count - 1)));
+    } else if (fieldId == CRSF_FIELD_SET_PRESET) {
+        const uint8_t count = graphics::menuHandler::modemPresetOptionCount();
+        if (count == 0)
+            return;
+        const auto preset = graphics::menuHandler::modemPresetOptionValue(std::min<uint8_t>(value, count - 1));
+        if (preset != config.lora.modem_preset)
+            graphics::menuHandler::applyModemPreset(preset);
+    } else if (fieldId == CRSF_FIELD_SET_SLOT) {
+        const uint32_t slot = std::min<uint32_t>(value, graphics::menuHandler::computeLoraNumChannels());
+        if (slot != config.lora.channel_num)
+            graphics::menuHandler::applyFrequencySlot(slot);
+    } else if (fieldId == CRSF_FIELD_SET_TXPOWER) {
+        const uint8_t count = graphics::menuHandler::txPowerOptionCount();
+        if (count == 0)
+            return;
+        graphics::menuHandler::applyTxPower(graphics::menuHandler::txPowerOptionDbm(std::min<uint8_t>(value, count - 1)));
+    } else if (fieldId == CRSF_FIELD_SET_ROLE) {
+        const uint8_t count = graphics::menuHandler::deviceRoleOptionCount();
+        if (count == 0)
+            return;
+        const auto role = graphics::menuHandler::deviceRoleOptionValue(std::min<uint8_t>(value, count - 1));
+        if (role != config.device.role)
+            graphics::menuHandler::applyDeviceRole(role);
+    } else if (fieldId == CRSF_FIELD_SET_BT) {
+        graphics::menuHandler::setBluetoothEnabled(value != 0);
+#if HAS_WIFI
+    } else if (fieldId == CRSF_FIELD_SET_WIFI) {
+        const bool enable = value != 0;
+        if (enable != config.network.wifi_enabled)
+            graphics::menuHandler::setWifiEnabled(enable);
+#endif
+#ifdef EMAX_900_TX_OLED
+    } else if (fieldId == CRSF_FIELD_SET_SYNCWORD) {
+        graphics::menuHandler::setSyncWord(value != 0 ? 0x12 : 0x2b);
+#endif
+#ifdef RF95_FAN_EN
+    } else if (fieldId == CRSF_FIELD_SET_FAN) {
+        graphics::menuHandler::setFanMode(value == 1 ? FanMode::ForceOn : value == 2 ? FanMode::ForceOff : FanMode::Auto);
+#endif
+    }
+}
+
 // Like ELRS UARTwdt: the constructor's setup alone never received a valid frame in the bay.
 int32_t CrsfHandsetModule::runOnce()
 {
+    if (const uint8_t pendingField = pendingSettingsField.exchange(0))
+        applyPendingSettingsWrite(pendingField, pendingSettingsValue.load());
+    if (rebootRequested.exchange(false))
+        graphics::menuHandler::requestReboot();
+    if (shutdownRequested.exchange(false))
+        graphics::menuHandler::requestShutdown();
+#ifdef EMAX_900_TX_OLED
+    if (bootElrsRequested.exchange(false)) {
+        if (!graphics::menuHandler::switchToOtherFirmwareSlot())
+            LOG_WARN("CrsfHandset: failed to switch firmware slot");
+    }
+#endif
+
     updateMeshSnapshot();
 
     if (sendRequested.exchange(false))

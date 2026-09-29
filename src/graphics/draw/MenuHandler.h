@@ -1,6 +1,10 @@
 #pragma once
 #if HAS_SCREEN
 #include "configuration.h"
+#ifdef RF95_FAN_EN
+#include "FanControl.h"
+#endif
+class OLEDDisplay;
 namespace graphics
 {
 
@@ -121,6 +125,41 @@ class menuHandler
     static void txPowerPicker();
     static void syncWordMenu();
     static void changeSlotMenu();
+
+    // --- Apply bodies + option tables shared with CrsfHandsetModule's Lua Settings folder, so the
+    // Lua menu drives the exact same logic as the on-device pickers above. Main thread only. ---
+    static uint8_t loraRegionOptionCount();
+    static const char *loraRegionOptionName(uint8_t idx); // short name, e.g. "EU_868"
+    static meshtastic_Config_LoRaConfig_RegionCode loraRegionOptionValue(uint8_t idx);
+    static uint8_t modemPresetOptionCount();
+    static const char *modemPresetOptionName(uint8_t idx);
+    static meshtastic_Config_LoRaConfig_ModemPreset modemPresetOptionValue(uint8_t idx);
+    static uint8_t deviceRoleOptionCount();
+    static const char *deviceRoleOptionName(uint8_t idx);
+    static meshtastic_Config_DeviceConfig_Role deviceRoleOptionValue(uint8_t idx);
+    static uint8_t txPowerOptionCount();
+    static const char *txPowerOptionName(uint8_t idx); // e.g. "14dBm"
+    static int8_t txPowerOptionDbm(uint8_t idx);
+    static uint32_t computeLoraNumChannels(); // channel count for the current region/preset
+
+    static void applyLoraRegion(meshtastic_Config_LoRaConfig_RegionCode region);
+    static void applyModemPreset(meshtastic_Config_LoRaConfig_ModemPreset preset);
+    static void applyFrequencySlot(uint32_t slot);
+    static void applyTxPower(int8_t dbm);
+    static void applyDeviceRole(meshtastic_Config_DeviceConfig_Role role);
+    static void setBluetoothEnabled(bool enable);
+#if HAS_WIFI
+    static void setWifiEnabled(bool enable);
+#endif
+    static void requestReboot();
+    static void requestShutdown();
+#ifdef EMAX_900_TX_OLED
+    static void setSyncWord(uint8_t word);
+    static bool switchToOtherFirmwareSlot();
+#endif
+#ifdef RF95_FAN_EN
+    static void setFanMode(FanMode mode);
+#endif
 
   private:
     static void saveUIConfig();
