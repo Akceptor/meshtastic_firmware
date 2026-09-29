@@ -84,18 +84,23 @@ never comes up at all. `extra_scripts/lr11x0_accept_trx_firmware.py` patches the
 RadioLib copy at build time to also accept `0xF3`. Nothing else differs; the command set is
 the same. There is no upstream fix as of RadioLib 7.6.0.
 
-### 2.7.26.665b728
+### 2.7.26.9c60209
 
 Dual-OTA layout (two 1.875MB app slots) for use with an external dual-boot bootloader
 that keeps the original ExpressLRS firmware in the other slot. See "dual-boot" section
 below.
 
+Adds the ExpressLRS Lua menu (same as the Emax: canned Send, Messages, Nodes, Settings — see
+`variants/esp32/emax_900_tx_oled/README.md`) over the JR-bay CRSF link on GPIO13. Differences on
+this board: no screen, so received messages are kept in RAM only (lost on power-off), the canned
+list is the Meshtastic default (Hi/Bye/Yes/No/Ok), and there's no Sync Word / PA Fan setting.
+
 | File | Board | Notes |
 |---|---|---|
-| `firmware-bayckrc_dual_band-2.7.26.665b728-sync0x12.factory.bin` | BAYCKRC Dual Band TX (gateway) | LR11xx-compatible sync word. Full image incl. bootloader + partitions. Flash to offset `0x0`. |
-| `firmware-bayckrc_dual_band-2.7.26.665b728-sync0x12.ota.bin` | BAYCKRC Dual Band TX (gateway) | LR11xx-compatible sync word. App only. For OTA, or serial flash to offset `0x10000`. |
-| `firmware-bayckrc_dual_band-2.7.26.665b728-sync0x2b.factory.bin` | BAYCKRC Dual Band TX (gateway) | Stock Meshtastic sync word. Full image incl. bootloader + partitions. Flash to offset `0x0`. |
-| `firmware-bayckrc_dual_band-2.7.26.665b728-sync0x2b.ota.bin` | BAYCKRC Dual Band TX (gateway) | Stock Meshtastic sync word. App only. For OTA, or serial flash to offset `0x10000`. |
+| `firmware-bayckrc_dual_band-2.7.26.9c60209-sync0x12.factory.bin` | BAYCKRC Dual Band TX (gateway) | LR11xx-compatible sync word. Full image incl. bootloader + partitions. Flash to offset `0x0`. |
+| `firmware-bayckrc_dual_band-2.7.26.9c60209-sync0x12.ota.bin` | BAYCKRC Dual Band TX (gateway) | LR11xx-compatible sync word. App only. For OTA, or serial flash to offset `0x10000`. |
+| `firmware-bayckrc_dual_band-2.7.26.9c60209-sync0x2b.factory.bin` | BAYCKRC Dual Band TX (gateway) | Stock Meshtastic sync word. Full image incl. bootloader + partitions. Flash to offset `0x0`. |
+| `firmware-bayckrc_dual_band-2.7.26.9c60209-sync0x2b.ota.bin` | BAYCKRC Dual Band TX (gateway) | Stock Meshtastic sync word. App only. For OTA, or serial flash to offset `0x10000`. |
 
 Built with:
 
@@ -161,6 +166,36 @@ PLATFORMIO_BUILD_FLAGS="-DMESHTASTIC_LORA_SYNCWORD=0x12" pio run -e emax_900_tx_
 
 # sync0x2b (stock Meshtastic default):
 pio run -e emax_900_tx_oled
+```
+
+## Radiomaster TX15 internal module — ElrsDual slot 1
+
+### 2.7.26.9c60209 — untested on hardware
+
+Meshtastic for the TX15 handset's **internal** ExpressLRS module (ESP32 + LR1121 + external PA),
+to run from OTA slot 1 next to ExpressLRS in slot 0 via the ElrsDual slot-switch bootloader.
+Design and verification checklist: `docs/radiomaster-tx15-internal-spec.md`. No Lua menu yet
+(step 1) — manage it from the phone app over Bluetooth.
+
+| File | Board | Notes |
+|---|---|---|
+| `firmware-radiomaster_tx15_internal-2.7.26.9c60209-sync0x12.ota.bin` | Radiomaster TX15 (internal) | LR11xx-compatible sync word. App only — flash to slot 1, `0x1F0000`. |
+| `firmware-radiomaster_tx15_internal-2.7.26.9c60209-sync0x2b.ota.bin` | Radiomaster TX15 (internal) | Stock Meshtastic sync word. App only — flash to slot 1, `0x1F0000`. |
+| `firmware-radiomaster_tx15_internal-2.7.26.9c60209-sync0x12.factory.bin` | Radiomaster TX15 (internal) | Full image. **Not for dual-boot** — overwrites the bootloader and slot 0. |
+| `firmware-radiomaster_tx15_internal-2.7.26.9c60209-sync0x2b.factory.bin` | Radiomaster TX15 (internal) | Full image. **Not for dual-boot**. |
+
+- **TX power is capped at 20 dBm (100 mW)** until measured on a power meter; the PA table is
+  ExpressLRS's nominal one. Raise `LR11X0_PA_MAX_EIRP_DBM` only after measuring.
+- **Never use Meshtastic's in-app OTA update** on this board: it writes the inactive slot,
+  which is ExpressLRS.
+- RSSI reads ~15 dB high (the module has an external LNA).
+- The serial console stays on UART0 (the CRSF lines to the handset) at 115200.
+
+Built with:
+
+```
+PLATFORMIO_BUILD_FLAGS="-DMESHTASTIC_LORA_SYNCWORD=0x12" pio run -e radiomaster_tx15_internal
+pio run -e radiomaster_tx15_internal
 ```
 
 ## `sync0x12` — read this before flashing
