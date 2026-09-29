@@ -7,6 +7,11 @@
 #undef GPS_RX_PIN
 #undef GPS_TX_PIN
 
+// JR-bay signal pin to the handset (single wire, half duplex) — serial_rx/serial_tx in the ELRS
+// target JSON. Lets the stock ExpressLRS Lua script on the handset identify this module (see
+// CrsfHandsetModule). GPIO13 is free (not used by SPI/NeoPixel/fan/backpack above).
+#define CRSF_UART_PIN 13
+
 #undef EXT_NOTIFY_OUT
 
 // NeoPixel (GRB, 1 LED)

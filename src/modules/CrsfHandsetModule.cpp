@@ -6,9 +6,8 @@
 #include "CrsfHandsetModule.h"
 #include "MeshService.h"
 #include "NodeDB.h"
-#include "MessageStore.h"
 #include "Throttle.h"
-#include "graphics/draw/MenuHandler.h"
+#include "modules/DeviceSettings.h"
 #include "mesh/MeshTypes.h"
 #include "mesh/Router.h"
 #include "mesh/generated/meshtastic/cannedmessages.pb.h"
@@ -21,7 +20,12 @@
 #include <esp_system.h>
 #include <esp_rom_gpio.h>
 #include <soc/gpio_sig_map.h>
-#ifdef RF95_FAN_EN
+#if HAS_SCREEN
+#include "MessageStore.h"
+#else
+#include "modules/TextMessageModule.h" // textMessageModule, fed via observer instead (see header)
+#endif
+#if defined(RF95_FAN_EN) && defined(USE_RF95)
 #include "mesh/FanControl.h"
 #endif
 #ifdef EMAX_900_TX_OLED
@@ -86,19 +90,17 @@ constexpr uint8_t CRSF_FIELD_SETTINGS_AFTER_SYNC = CRSF_FIELD_SET_SYNCWORD + 1;
 #else
 constexpr uint8_t CRSF_FIELD_SETTINGS_AFTER_SYNC = CRSF_FIELD_SETTINGS_AFTER_WIFI;
 #endif
-#ifdef RF95_FAN_EN
+#if defined(RF95_FAN_EN) && defined(USE_RF95)
 constexpr uint8_t CRSF_FIELD_SET_FAN = CRSF_FIELD_SETTINGS_AFTER_SYNC;
 constexpr uint8_t CRSF_FIELD_SETTINGS_AFTER_FAN = CRSF_FIELD_SET_FAN + 1;
 #else
 constexpr uint8_t CRSF_FIELD_SETTINGS_AFTER_FAN = CRSF_FIELD_SETTINGS_AFTER_SYNC;
 #endif
 constexpr uint8_t CRSF_FIELD_SET_REBOOT = CRSF_FIELD_SETTINGS_AFTER_FAN;
-#ifdef EMAX_900_TX_OLED
+// "Boot ELRS" always gets an id (any ESP32 dual-OTA board could have a second slot); hidden (type|0x80)
+// at runtime via bootElrsAvailable when this image has no second app partition to switch into.
 constexpr uint8_t CRSF_FIELD_SET_BOOT_ELRS = CRSF_FIELD_SET_REBOOT + 1;
 constexpr uint8_t CRSF_FIELD_SET_SHUTDOWN = CRSF_FIELD_SET_BOOT_ELRS + 1;
-#else
-constexpr uint8_t CRSF_FIELD_SET_SHUTDOWN = CRSF_FIELD_SET_REBOOT + 1;
-#endif
 constexpr uint8_t CRSF_FIELD_SETTINGS_LAST = CRSF_FIELD_SET_SHUTDOWN; // last settings child id (inclusive)
 
 constexpr uint8_t CRSF_FIELD_ROOT_REFRESH = CRSF_FIELD_SETTINGS_LAST + 1; // root
@@ -223,6 +225,8 @@ CrsfHandsetModule::CrsfHandsetModule() : concurrency::OSThread("CrsfHandset")
                   "fieldCnt (static + node blocks + hidden parity field) must fit uint8_t");
     static_assert(MSG_OPTION_MAX_COUNT >= 1, "message SELECT needs at least the fixed 'Hi from ExpressLRS!' option");
     recordResetReason();
+    // Partition table doesn't change at runtime; check once here rather than on every parameter read.
+    bootElrsAvailable = DeviceSettings::hasSecondOtaPartition();
     crsfPort.begin(CRSF_BAUDS[0], SERIAL_8N1, CRSF_UART_PIN, CRSF_UART_PIN, false);
     crsfPort.setTimeout(0);
     crsfHandsetStats.baud = CRSF_BAUDS[0];
@@ -233,6 +237,11 @@ CrsfHandsetModule::CrsfHandsetModule() : concurrency::OSThread("CrsfHandset")
     crsfPort.setRxTimeout(2);
     crsfPort.onReceive([this]() { onUartData(); }, true);
     crsfPort.onReceiveError([this](hardwareSerial_error_t e) { onUartError((int)e); });
+#if !HAS_SCREEN
+    // No MessageStore without a screen; TextMessageModule is constructed before us (see Modules.cpp)
+    // and notifies synchronously on the main thread.
+    textMessageObserver.observe(textMessageModule);
+#endif
     LOG_INFO("CrsfHandset: listening on GPIO%d @ %u baud", CRSF_UART_PIN, CRSF_BAUDS[0]);
 }
 
@@ -333,7 +342,7 @@ static void appendInfoField(uint8_t *payload, uint8_t &i, const char *name, cons
     i += n;
 }
 
-// Appends a ';'-joined, NUL-terminated SELECT option list built from a graphics::menuHandler::*OptionName-style
+// Appends a ';'-joined, NUL-terminated SELECT option list built from a DeviceSettings::*OptionName-style
 // accessor. Reading these tables from the UART task is safe: they're compile-time-constant, not live
 // config/NodeDB state (see the class-wide "no config reads here" rule).
 template <typename NameFn> static void appendJoinedOptions(uint8_t *payload, uint8_t &i, uint8_t count, NameFn nameFn)
@@ -461,13 +470,11 @@ uint8_t CrsfHandsetModule::buildParameterEntryBody(uint8_t fieldId)
 #ifdef EMAX_900_TX_OLED
         payload[i++] = CRSF_FIELD_SET_SYNCWORD;
 #endif
-#ifdef RF95_FAN_EN
+#if defined(RF95_FAN_EN) && defined(USE_RF95)
         payload[i++] = CRSF_FIELD_SET_FAN;
 #endif
         payload[i++] = CRSF_FIELD_SET_REBOOT;
-#ifdef EMAX_900_TX_OLED
         payload[i++] = CRSF_FIELD_SET_BOOT_ELRS;
-#endif
         payload[i++] = CRSF_FIELD_SET_SHUTDOWN;
         payload[i++] = 0xFF;
     } else if (fieldId == CRSF_FIELD_SET_REGION) {
@@ -475,8 +482,8 @@ uint8_t CrsfHandsetModule::buildParameterEntryBody(uint8_t fieldId)
         payload[i++] = CRSF_PARAM_TYPE_SELECT;
         memcpy(&payload[i], fieldName, sizeof(fieldName));
         i += sizeof(fieldName);
-        const uint8_t count = graphics::menuHandler::loraRegionOptionCount();
-        appendJoinedOptions(payload, i, count, graphics::menuHandler::loraRegionOptionName);
+        const uint8_t count = DeviceSettings::loraRegionOptionCount();
+        appendJoinedOptions(payload, i, count, DeviceSettings::loraRegionOptionName);
         const uint8_t maxIdx = count > 0 ? count - 1 : 0;
         payload[i++] = std::min<uint8_t>(snap.settings.regionIdx, maxIdx);
         payload[i++] = 0; // min
@@ -488,8 +495,8 @@ uint8_t CrsfHandsetModule::buildParameterEntryBody(uint8_t fieldId)
         payload[i++] = CRSF_PARAM_TYPE_SELECT;
         memcpy(&payload[i], fieldName, sizeof(fieldName));
         i += sizeof(fieldName);
-        const uint8_t count = graphics::menuHandler::modemPresetOptionCount();
-        appendJoinedOptions(payload, i, count, graphics::menuHandler::modemPresetOptionName);
+        const uint8_t count = DeviceSettings::modemPresetOptionCount();
+        appendJoinedOptions(payload, i, count, DeviceSettings::modemPresetOptionName);
         const uint8_t maxIdx = count > 0 ? count - 1 : 0;
         payload[i++] = std::min<uint8_t>(snap.settings.presetIdx, maxIdx);
         payload[i++] = 0; // min
@@ -512,8 +519,8 @@ uint8_t CrsfHandsetModule::buildParameterEntryBody(uint8_t fieldId)
         payload[i++] = CRSF_PARAM_TYPE_SELECT;
         memcpy(&payload[i], fieldName, sizeof(fieldName));
         i += sizeof(fieldName);
-        const uint8_t count = graphics::menuHandler::txPowerOptionCount();
-        appendJoinedOptions(payload, i, count, graphics::menuHandler::txPowerOptionName);
+        const uint8_t count = DeviceSettings::txPowerOptionCount();
+        appendJoinedOptions(payload, i, count, DeviceSettings::txPowerOptionName);
         const uint8_t maxIdx = count > 0 ? count - 1 : 0;
         payload[i++] = std::min<uint8_t>(snap.settings.txPowerIdx, maxIdx);
         payload[i++] = 0; // min
@@ -525,8 +532,8 @@ uint8_t CrsfHandsetModule::buildParameterEntryBody(uint8_t fieldId)
         payload[i++] = CRSF_PARAM_TYPE_SELECT;
         memcpy(&payload[i], fieldName, sizeof(fieldName));
         i += sizeof(fieldName);
-        const uint8_t count = graphics::menuHandler::deviceRoleOptionCount();
-        appendJoinedOptions(payload, i, count, graphics::menuHandler::deviceRoleOptionName);
+        const uint8_t count = DeviceSettings::deviceRoleOptionCount();
+        appendJoinedOptions(payload, i, count, DeviceSettings::deviceRoleOptionName);
         const uint8_t maxIdx = count > 0 ? count - 1 : 0;
         payload[i++] = std::min<uint8_t>(snap.settings.roleIdx, maxIdx);
         payload[i++] = 0; // min
@@ -549,7 +556,7 @@ uint8_t CrsfHandsetModule::buildParameterEntryBody(uint8_t fieldId)
         static const char opts[] = "0x2b;0x12";
         appendFixedSelectField(payload, i, fieldName, sizeof(fieldName), opts, sizeof(opts), snap.settings.syncWordIdx, 1);
 #endif
-#ifdef RF95_FAN_EN
+#if defined(RF95_FAN_EN) && defined(USE_RF95)
     } else if (fieldId == CRSF_FIELD_SET_FAN) {
         static const char fieldName[] = "PA Fan";
         static const char opts[] = "Auto;On;Off";
@@ -565,18 +572,17 @@ uint8_t CrsfHandsetModule::buildParameterEntryBody(uint8_t fieldId)
         payload[i++] = CRSF_CMD_TIMEOUT_10MS;
         memcpy(&payload[i], info, sizeof(info));
         i += sizeof(info);
-#ifdef EMAX_900_TX_OLED
     } else if (fieldId == CRSF_FIELD_SET_BOOT_ELRS) {
         static const char fieldName[] = "Boot ELRS";
         static const char info[] = "Boot ELRS slot?";
-        payload[i++] = CRSF_PARAM_TYPE_COMMAND;
+        // Hidden (type|0x80) unless this image has a second OTA app partition to switch into.
+        payload[i++] = CRSF_PARAM_TYPE_COMMAND | (bootElrsAvailable.load() ? 0 : 0x80);
         memcpy(&payload[i], fieldName, sizeof(fieldName));
         i += sizeof(fieldName);
         payload[i++] = bootElrsCmdStatus.load();
         payload[i++] = CRSF_CMD_TIMEOUT_10MS;
         memcpy(&payload[i], info, sizeof(info));
         i += sizeof(info);
-#endif
     } else if (fieldId == CRSF_FIELD_SET_SHUTDOWN) {
         static const char fieldName[] = "Shutdown";
         static const char info[] = "Shutdown? Replug to wake";
@@ -759,17 +765,16 @@ void CrsfHandsetModule::handleFrame(const uint8_t *frame, uint8_t len)
         } else if (fieldId == CRSF_FIELD_SET_REBOOT) {
             handleConfirmCommandWrite(rebootCmdStatus, rebootRequested, value);
             sendParameterEntry(origAddr, fieldId, 0);
-#ifdef EMAX_900_TX_OLED
         } else if (fieldId == CRSF_FIELD_SET_BOOT_ELRS) {
-            handleConfirmCommandWrite(bootElrsCmdStatus, bootElrsRequested, value);
+            if (bootElrsAvailable.load()) // hidden field on the Lua side otherwise; ignore a stray write
+                handleConfirmCommandWrite(bootElrsCmdStatus, bootElrsRequested, value);
             sendParameterEntry(origAddr, fieldId, 0);
-#endif
         } else if (fieldId == CRSF_FIELD_SET_SHUTDOWN) {
             handleConfirmCommandWrite(shutdownCmdStatus, shutdownRequested, value);
             sendParameterEntry(origAddr, fieldId, 0);
         } else if (isSettingsValueField(fieldId)) {
             // Applying touches config/NodeDB and may reboot, so just record it; runOnce() (main
-            // thread) applies it via the matching graphics::menuHandler:: function and refreshes the snapshot.
+            // thread) applies it via the matching DeviceSettings:: function and refreshes the snapshot.
             // No reply: the Lua re-reads the field itself after a write.
             pendingSettingsField = fieldId;
             pendingSettingsValue = value;
@@ -927,6 +932,7 @@ static void wrapMessageLines(char lines[][22], uint8_t maxLines, const char *tex
     }
 }
 
+#if HAS_SCREEN
 // Sourced from MessageStore (persisted to flash) so the list survives the module losing power in the bay.
 void CrsfHandsetModule::rebuildMessagesFromStore()
 {
@@ -953,6 +959,30 @@ void CrsfHandsetModule::rebuildMessagesFromStore()
         wrapMessageLines(entry.lines, MESH_MSG_ROW_COUNT, combined);
     }
 }
+#else
+// No MessageStore without a screen: fed live instead, RAM-only (doesn't survive a reboot). Observer
+// fires synchronously from packet handling, on the main thread (same thread as the OSThread scheduler),
+// so this can write textMsgRing directly.
+int CrsfHandsetModule::onTextMessageReceived(const meshtastic_MeshPacket *mp)
+{
+    if (mp->from == nodeDB->getNodeNum())
+        return 0;
+
+    char sender[8];
+    shortNameOf(mp->from, sender, sizeof(sender));
+    const char *text = reinterpret_cast<const char *>(mp->decoded.payload.bytes);
+    char combined[216];
+    snprintf(combined, sizeof(combined), "%s: %.*s", sender, (int)std::min<size_t>(mp->decoded.payload.size, 200), text);
+
+    for (uint8_t j = std::min<uint8_t>(textMsgCount, MESH_MSG_SLOTS - 1); j > 0; j--)
+        textMsgRing[j] = textMsgRing[j - 1];
+    MeshMsgSnapshot &entry = textMsgRing[0];
+    buildMsgLabel(entry.label, sizeof(entry.label), combined);
+    wrapMessageLines(entry.lines, MESH_MSG_ROW_COUNT, combined);
+    textMsgCount = std::min<uint8_t>(textMsgCount + 1, MESH_MSG_SLOTS);
+    return 0;
+}
+#endif
 
 static void formatAge(char *out, size_t outLen, uint32_t agoSecs)
 {
@@ -1060,7 +1090,10 @@ void CrsfHandsetModule::updateMeshSnapshot()
     buildSettingsSnapshot(writeIdx);
     buildCannedMessageOptions(snap);
 
+#if HAS_SCREEN
     rebuildMessagesFromStore();
+#endif
+    // Without a screen, textMsgRing is already kept current by onTextMessageReceived (observer).
     for (uint8_t j = 0; j < MESH_MSG_SLOTS; j++)
         snap.messages[j] = (j < textMsgCount) ? textMsgRing[j] : MeshMsgSnapshot{};
 
@@ -1120,31 +1153,31 @@ void CrsfHandsetModule::buildSettingsSnapshot(uint8_t writeIdx)
     auto &st = meshSnapshots[writeIdx].settings;
 
     st.regionIdx = 0;
-    for (uint8_t k = 0; k < graphics::menuHandler::loraRegionOptionCount(); k++) {
-        if (graphics::menuHandler::loraRegionOptionValue(k) == config.lora.region) {
+    for (uint8_t k = 0; k < DeviceSettings::loraRegionOptionCount(); k++) {
+        if (DeviceSettings::loraRegionOptionValue(k) == config.lora.region) {
             st.regionIdx = k;
             break;
         }
     }
     st.presetIdx = 0;
-    for (uint8_t k = 0; k < graphics::menuHandler::modemPresetOptionCount(); k++) {
-        if (graphics::menuHandler::modemPresetOptionValue(k) == config.lora.modem_preset) {
+    for (uint8_t k = 0; k < DeviceSettings::modemPresetOptionCount(); k++) {
+        if (DeviceSettings::modemPresetOptionValue(k) == config.lora.modem_preset) {
             st.presetIdx = k;
             break;
         }
     }
     st.slotValue = (uint8_t)std::min<uint32_t>(config.lora.channel_num, 255);
-    st.slotMax = (uint8_t)std::min<uint32_t>(graphics::menuHandler::computeLoraNumChannels(), 255);
+    st.slotMax = (uint8_t)std::min<uint32_t>(DeviceSettings::computeLoraNumChannels(), 255);
     st.txPowerIdx = 0; // falls back to the lowest step (10dBm) when tx_power is unset or off-list
-    for (uint8_t k = 0; k < graphics::menuHandler::txPowerOptionCount(); k++) {
-        if (graphics::menuHandler::txPowerOptionDbm(k) == config.lora.tx_power) {
+    for (uint8_t k = 0; k < DeviceSettings::txPowerOptionCount(); k++) {
+        if (DeviceSettings::txPowerOptionDbm(k) == config.lora.tx_power) {
             st.txPowerIdx = k;
             break;
         }
     }
     st.roleIdx = 0;
-    for (uint8_t k = 0; k < graphics::menuHandler::deviceRoleOptionCount(); k++) {
-        if (graphics::menuHandler::deviceRoleOptionValue(k) == config.device.role) {
+    for (uint8_t k = 0; k < DeviceSettings::deviceRoleOptionCount(); k++) {
+        if (DeviceSettings::deviceRoleOptionValue(k) == config.device.role) {
             st.roleIdx = k;
             break;
         }
@@ -1156,60 +1189,60 @@ void CrsfHandsetModule::buildSettingsSnapshot(uint8_t writeIdx)
 #ifdef EMAX_900_TX_OLED
     st.syncWordIdx = (emaxSyncWord == 0x12) ? 1 : 0;
 #endif
-#ifdef RF95_FAN_EN
+#if defined(RF95_FAN_EN) && defined(USE_RF95)
     st.fanIdx = (fanMode == FanMode::ForceOn) ? 1 : (fanMode == FanMode::ForceOff) ? 2 : 0;
 #endif
 }
 
-// Applies one Settings field write via the matching graphics::menuHandler:: function (main thread only: touches
+// Applies one Settings field write via the matching DeviceSettings:: function (main thread only: touches
 // config/NodeDB and may reboot). Guards the reboot-inducing ones against a redundant re-confirm of the
-// same value from the Lua (leaving edit mode always re-sends, even unchanged); graphics::menuHandler::applyLoraRegion
+// same value from the Lua (leaving edit mode always re-sends, even unchanged); DeviceSettings::applyLoraRegion
 // already has the same no-op guard built in for the OLED picker, so it's not duplicated here.
 void CrsfHandsetModule::applyPendingSettingsWrite(uint8_t fieldId, uint8_t value)
 {
     if (fieldId == CRSF_FIELD_SET_REGION) {
-        const uint8_t count = graphics::menuHandler::loraRegionOptionCount();
+        const uint8_t count = DeviceSettings::loraRegionOptionCount();
         if (count == 0)
             return;
-        graphics::menuHandler::applyLoraRegion(graphics::menuHandler::loraRegionOptionValue(std::min<uint8_t>(value, count - 1)));
+        DeviceSettings::applyLoraRegion(DeviceSettings::loraRegionOptionValue(std::min<uint8_t>(value, count - 1)));
     } else if (fieldId == CRSF_FIELD_SET_PRESET) {
-        const uint8_t count = graphics::menuHandler::modemPresetOptionCount();
+        const uint8_t count = DeviceSettings::modemPresetOptionCount();
         if (count == 0)
             return;
-        const auto preset = graphics::menuHandler::modemPresetOptionValue(std::min<uint8_t>(value, count - 1));
+        const auto preset = DeviceSettings::modemPresetOptionValue(std::min<uint8_t>(value, count - 1));
         if (preset != config.lora.modem_preset)
-            graphics::menuHandler::applyModemPreset(preset);
+            DeviceSettings::applyModemPreset(preset);
     } else if (fieldId == CRSF_FIELD_SET_SLOT) {
-        const uint32_t slot = std::min<uint32_t>(value, graphics::menuHandler::computeLoraNumChannels());
+        const uint32_t slot = std::min<uint32_t>(value, DeviceSettings::computeLoraNumChannels());
         if (slot != config.lora.channel_num)
-            graphics::menuHandler::applyFrequencySlot(slot);
+            DeviceSettings::applyFrequencySlot(slot);
     } else if (fieldId == CRSF_FIELD_SET_TXPOWER) {
-        const uint8_t count = graphics::menuHandler::txPowerOptionCount();
+        const uint8_t count = DeviceSettings::txPowerOptionCount();
         if (count == 0)
             return;
-        graphics::menuHandler::applyTxPower(graphics::menuHandler::txPowerOptionDbm(std::min<uint8_t>(value, count - 1)));
+        DeviceSettings::applyTxPower(DeviceSettings::txPowerOptionDbm(std::min<uint8_t>(value, count - 1)));
     } else if (fieldId == CRSF_FIELD_SET_ROLE) {
-        const uint8_t count = graphics::menuHandler::deviceRoleOptionCount();
+        const uint8_t count = DeviceSettings::deviceRoleOptionCount();
         if (count == 0)
             return;
-        const auto role = graphics::menuHandler::deviceRoleOptionValue(std::min<uint8_t>(value, count - 1));
+        const auto role = DeviceSettings::deviceRoleOptionValue(std::min<uint8_t>(value, count - 1));
         if (role != config.device.role)
-            graphics::menuHandler::applyDeviceRole(role);
+            DeviceSettings::applyDeviceRole(role);
     } else if (fieldId == CRSF_FIELD_SET_BT) {
-        graphics::menuHandler::setBluetoothEnabled(value != 0);
+        DeviceSettings::setBluetoothEnabled(value != 0);
 #if HAS_WIFI
     } else if (fieldId == CRSF_FIELD_SET_WIFI) {
         const bool enable = value != 0;
         if (enable != config.network.wifi_enabled)
-            graphics::menuHandler::setWifiEnabled(enable);
+            DeviceSettings::setWifiEnabled(enable);
 #endif
 #ifdef EMAX_900_TX_OLED
     } else if (fieldId == CRSF_FIELD_SET_SYNCWORD) {
-        graphics::menuHandler::setSyncWord(value != 0 ? 0x12 : 0x2b);
+        DeviceSettings::setSyncWord(value != 0 ? 0x12 : 0x2b);
 #endif
-#ifdef RF95_FAN_EN
+#if defined(RF95_FAN_EN) && defined(USE_RF95)
     } else if (fieldId == CRSF_FIELD_SET_FAN) {
-        graphics::menuHandler::setFanMode(value == 1 ? FanMode::ForceOn : value == 2 ? FanMode::ForceOff : FanMode::Auto);
+        DeviceSettings::setFanMode(value == 1 ? FanMode::ForceOn : value == 2 ? FanMode::ForceOff : FanMode::Auto);
 #endif
     }
 }
@@ -1220,15 +1253,13 @@ int32_t CrsfHandsetModule::runOnce()
     if (const uint8_t pendingField = pendingSettingsField.exchange(0))
         applyPendingSettingsWrite(pendingField, pendingSettingsValue.load());
     if (rebootRequested.exchange(false))
-        graphics::menuHandler::requestReboot();
+        DeviceSettings::requestReboot();
     if (shutdownRequested.exchange(false))
-        graphics::menuHandler::requestShutdown();
-#ifdef EMAX_900_TX_OLED
+        DeviceSettings::requestShutdown();
     if (bootElrsRequested.exchange(false)) {
-        if (!graphics::menuHandler::switchToOtherFirmwareSlot())
+        if (!DeviceSettings::switchToOtherFirmwareSlot())
             LOG_WARN("CrsfHandset: failed to switch firmware slot");
     }
-#endif
 
     updateMeshSnapshot();
 

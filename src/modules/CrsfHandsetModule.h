@@ -1,6 +1,7 @@
 #pragma once
 
 #include "configuration.h" // HAS_WIFI, RF95_FAN_EN, EMAX_900_TX_OLED
+#include "Observer.h"
 #include "concurrency/OSThread.h"
 #include "mesh/MeshTypes.h"
 #include <Arduino.h>
@@ -34,7 +35,13 @@ class CrsfHandsetModule : private concurrency::OSThread
     void setDirection(bool transmit);
     void applyPolarityAndBaud();
     void updateMeshSnapshot();
+#if HAS_SCREEN
     void rebuildMessagesFromStore();
+#else
+    // No MessageStore without a screen (see MessageStore.h): fed instead by a TextMessageModule
+    // observer, RAM-only (see textMessageObserver below).
+    int onTextMessageReceived(const meshtastic_MeshPacket *mp);
+#endif
     void buildSettingsSnapshot(uint8_t writeIdx); // fills meshSnapshots[writeIdx].settings
     void applyPendingSettingsWrite(uint8_t fieldId, uint8_t value);
 
@@ -60,7 +67,7 @@ class CrsfHandsetModule : private concurrency::OSThread
 
     // Settings > (Region/Preset/Slot/TxPower/Role/Bluetooth/WiFi/SyncWord/Fan) writes: the UART task
     // just records the latest one here (single slot; Lua edits one field at a time), and runOnce()
-    // applies it via the menuHandler:: functions and refreshes the snapshot. 0 = none pending.
+    // applies it via the DeviceSettings:: functions and refreshes the snapshot. 0 = none pending.
     std::atomic<uint8_t> pendingSettingsField{0};
     std::atomic<uint8_t> pendingSettingsValue{0};
 
@@ -70,10 +77,12 @@ class CrsfHandsetModule : private concurrency::OSThread
     std::atomic<bool> rebootRequested{false};
     std::atomic<uint8_t> shutdownCmdStatus{0};
     std::atomic<bool> shutdownRequested{false};
-#ifdef EMAX_900_TX_OLED
     std::atomic<uint8_t> bootElrsCmdStatus{0};
     std::atomic<bool> bootElrsRequested{false};
-#endif
+    // Whether a second OTA app partition exists to switch into; checked once at construction (main
+    // thread — the partition table doesn't change at runtime) and read from the UART task to decide
+    // whether "Boot ELRS" is shown (hidden bit), same as any other board with a single app partition.
+    std::atomic<bool> bootElrsAvailable{false};
 
     // Entry payload assembled whole, then sliced into <=64B CRSF frames on request; UART task only,
     // so a member (not a uart_event_task stack local) is fine despite the size.
@@ -113,7 +122,7 @@ class CrsfHandsetModule : private concurrency::OSThread
         char label[24] = "";                          // preview shown as the message folder's name
         char lines[MESH_MSG_ROW_COUNT][22] = {};       // word-wrapped rows (<=21 chars); empty means hidden row
     };
-    // Current values for the Settings folder; indices are into the matching menuHandler::*OptionName/
+    // Current values for the Settings folder; indices are into the matching DeviceSettings::*OptionName/
     // *OptionValue tables. Built on the main thread (config/NodeDB reads are not safe from the UART task).
     struct SettingsSnapshot {
         uint8_t regionIdx = 0;
@@ -129,7 +138,7 @@ class CrsfHandsetModule : private concurrency::OSThread
 #ifdef EMAX_900_TX_OLED
         uint8_t syncWordIdx = 0; // 0 = 0x2b (standard), 1 = 0x12 (LR11xx compat)
 #endif
-#ifdef RF95_FAN_EN
+#if defined(RF95_FAN_EN) && defined(USE_RF95)
         uint8_t fanIdx = 0; // 0 = Auto, 1 = On, 2 = Off
 #endif
     };
@@ -151,11 +160,20 @@ class CrsfHandsetModule : private concurrency::OSThread
     uint8_t mainMsgTextCount = 0;
     void buildCannedMessageOptions(MeshSnapshot &snap);
 
-    // Newest-first cache of MessageStore, main thread only; rebuilt when the store changes.
+    // Newest-first ring of received texts, main thread only.
     MeshMsgSnapshot textMsgRing[MESH_MSG_SLOTS];
     uint8_t textMsgCount = 0;
+#if HAS_SCREEN
+    // Cache of MessageStore (persisted to flash); rebuilt when the store changes.
     size_t lastStoreSize = SIZE_MAX;
     uint32_t lastStoreNewestTs = 0;
+#else
+    // TextMessageModule notifies observers synchronously from packet handling, on the main thread
+    // (same thread as the OSThread scheduler), so onTextMessageReceived can write textMsgRing directly.
+    // RAM-only: without MessageStore this history doesn't survive a reboot.
+    CallbackObserver<CrsfHandsetModule, const meshtastic_MeshPacket *> textMessageObserver =
+        CallbackObserver<CrsfHandsetModule, const meshtastic_MeshPacket *>(this, &CrsfHandsetModule::onTextMessageReceived);
+#endif
 };
 
 // Shown in System > CRSF Status; USB can't be attached while the module is in the JR bay.
