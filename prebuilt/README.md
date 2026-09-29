@@ -84,7 +84,7 @@ never comes up at all. `extra_scripts/lr11x0_accept_trx_firmware.py` patches the
 RadioLib copy at build time to also accept `0xF3`. Nothing else differs; the command set is
 the same. There is no upstream fix as of RadioLib 7.6.0.
 
-### 2.7.26.9c60209
+### 2.7.26.59f5439
 
 Dual-OTA layout (two 1.875MB app slots) for use with an external dual-boot bootloader
 that keeps the original ExpressLRS firmware in the other slot. See "dual-boot" section
@@ -97,10 +97,10 @@ list is the Meshtastic default (Hi/Bye/Yes/No/Ok), and there's no Sync Word / PA
 
 | File | Board | Notes |
 |---|---|---|
-| `firmware-bayckrc_dual_band-2.7.26.9c60209-sync0x12.factory.bin` | BAYCKRC Dual Band TX (gateway) | LR11xx-compatible sync word. Full image incl. bootloader + partitions. Flash to offset `0x0`. |
-| `firmware-bayckrc_dual_band-2.7.26.9c60209-sync0x12.ota.bin` | BAYCKRC Dual Band TX (gateway) | LR11xx-compatible sync word. App only. For OTA, or serial flash to offset `0x10000`. |
-| `firmware-bayckrc_dual_band-2.7.26.9c60209-sync0x2b.factory.bin` | BAYCKRC Dual Band TX (gateway) | Stock Meshtastic sync word. Full image incl. bootloader + partitions. Flash to offset `0x0`. |
-| `firmware-bayckrc_dual_band-2.7.26.9c60209-sync0x2b.ota.bin` | BAYCKRC Dual Band TX (gateway) | Stock Meshtastic sync word. App only. For OTA, or serial flash to offset `0x10000`. |
+| `firmware-bayckrc_dual_band-2.7.26.59f5439-sync0x12.factory.bin` | BAYCKRC Dual Band TX (gateway) | LR11xx-compatible sync word. Full image incl. bootloader + partitions. Flash to offset `0x0`. |
+| `firmware-bayckrc_dual_band-2.7.26.59f5439-sync0x12.ota.bin` | BAYCKRC Dual Band TX (gateway) | LR11xx-compatible sync word. App only. For OTA, or serial flash to offset `0x10000`. |
+| `firmware-bayckrc_dual_band-2.7.26.59f5439-sync0x2b.factory.bin` | BAYCKRC Dual Band TX (gateway) | Stock Meshtastic sync word. Full image incl. bootloader + partitions. Flash to offset `0x0`. |
+| `firmware-bayckrc_dual_band-2.7.26.59f5439-sync0x2b.ota.bin` | BAYCKRC Dual Band TX (gateway) | Stock Meshtastic sync word. App only. For OTA, or serial flash to offset `0x10000`. |
 
 Built with:
 
@@ -139,7 +139,11 @@ board has no display or input hardware) and excludes unused RadioLib radio famil
 (`SX127X`/`SX128X`/`LR2021` — this board only uses `LR11X0`). App image is ~1.45MB,
 comfortably under the 1.875MB slot.
 
-### 2.7.26.c54f34a
+Partition layout (from 59f5439) matches ElrsDual: two 1.875 MB slots, LittleFS 128 KB, and the
+slot-switch bootloader's counter sector at `0x3F0000` reserved. Earlier Emax/BAYCKRC images gave
+LittleFS 192 KB, overlapping that sector.
+
+### 2.7.26.59f5439
 
 Adds the ExpressLRS Lua menu: plug the module into an EdgeTX handset's JR bay (external RF
 = Crossfire, 400k baud) and run the stock ExpressLRS Lua script. It shows **ELRS->Meshtastic**
@@ -153,10 +157,10 @@ default for a fresh device.
 
 | File | Board | Notes |
 |---|---|---|
-| `firmware-emax_900_tx_oled-2.7.26.c54f34a-sync0x12.factory.bin` | Emax 900 OLED TX | Full image incl. bootloader + partitions. Flash to offset `0x0`. |
-| `firmware-emax_900_tx_oled-2.7.26.c54f34a-sync0x12.ota.bin` | Emax 900 OLED TX | App only. For OTA, or serial flash to offset `0x10000`. |
-| `firmware-emax_900_tx_oled-2.7.26.c54f34a-sync0x2b.factory.bin` | Emax 900 OLED TX | Full image, stock Meshtastic sync word. Flash to offset `0x0`. |
-| `firmware-emax_900_tx_oled-2.7.26.c54f34a-sync0x2b.ota.bin` | Emax 900 OLED TX | App only, stock sync word. For OTA, or serial flash to offset `0x10000`. |
+| `firmware-emax_900_tx_oled-2.7.26.59f5439-sync0x12.factory.bin` | Emax 900 OLED TX | Full image incl. bootloader + partitions. Flash to offset `0x0`. |
+| `firmware-emax_900_tx_oled-2.7.26.59f5439-sync0x12.ota.bin` | Emax 900 OLED TX | App only. For OTA, or serial flash to offset `0x10000`. |
+| `firmware-emax_900_tx_oled-2.7.26.59f5439-sync0x2b.factory.bin` | Emax 900 OLED TX | Full image, stock Meshtastic sync word. Flash to offset `0x0`. |
+| `firmware-emax_900_tx_oled-2.7.26.59f5439-sync0x2b.ota.bin` | Emax 900 OLED TX | App only, stock sync word. For OTA, or serial flash to offset `0x10000`. |
 
 Built with:
 
@@ -223,14 +227,14 @@ Factory image (erases config):
 
 ```
 esptool.py --chip esp32 --port /dev/cu.usbserial-0001 --baud 460800 \
-  write_flash 0x0 firmware-emax_900_tx_oled-2.7.26.c54f34a-sync0x12.factory.bin
+  write_flash 0x0 firmware-emax_900_tx_oled-2.7.26.59f5439-sync0x12.factory.bin
 ```
 
 App only (keeps config):
 
 ```
 esptool.py --chip esp32 --port /dev/cu.usbserial-0001 --baud 460800 \
-  write_flash 0x10000 firmware-emax_900_tx_oled-2.7.26.c54f34a-sync0x12.ota.bin
+  write_flash 0x10000 firmware-emax_900_tx_oled-2.7.26.59f5439-sync0x12.ota.bin
 ```
 
 ## PA calibration
