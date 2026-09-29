@@ -5,6 +5,66 @@ Base: upstream meshtastic/firmware @ same branch
 
 ---
 
+## SUMMARY (2026-09-23 → 09-29): ELRS Lua menu, bayck port, TX15 variant, emax dual-boot
+
+All pushed to `akceptor/develop-2.7.26` (last `77d39d4fa`) and ElrsDual `master` (`a3183fcb`).
+
+**1. CRSF handset link on the Emax (JR bay) — works.** Root causes, all fixed (details in
+"CRSF Lua handset identification" below): our UART1 TX permanently drove the single-wire GPIO13
+(RS485 mode doesn't tri-state TX on ESP32) → manual GPIO-matrix direction switching like ELRS;
+line is **inverted**, locks at 400k; a baud/polarity watchdog is required (constructor setup
+alone never parsed a frame — unexplained); per-frame logging hung boot; logging from the
+`Serial1.onReceive` callback overflowed the 2 KB `uart_event_task` stack → PANIC (stack now
+4096, no logging in the callback). Commits `ff1e7e247`, `d82ffb1e9`, `a5f6f1994`, `1a1373068`.
+
+**2. ELRS Lua menu ("ELRS->Meshtastic")**, served by `src/modules/CrsfHandsetModule.cpp`:
+Message (canned SELECT: "Hi from ExpressLRS!" + canned module list) · [Send] (ch-0 broadcast,
+5 s cooldown) · > Messages (last 5; folder per message, word-wrapped; persisted via
+`MessageStore`, autosave 60 s on emax) · > Nodes (10 newest, folder per node with rows) ·
+> Settings (Region, Preset, Slot, TX power, Role, BT, WiFi, Sync word*, PA fan*, [Reboot],
+[Boot ELRS], [Shutdown]; *emax only) · [Refresh] · Version. Settings apply logic lives in the
+screen-independent `src/modules/DeviceSettings.{h,cpp}` shared with the OLED menu
+(`c54f34a0e`, `9c60209b8`). On-device diagnostics: System → OK → CRSF Status (counters, locked
+baud/polarity, NVS-persisted reset reason). ELRS Lua quirks the design works around are listed
+in the CRSF section below and in `variants/esp32/emax_900_tx_oled/README.md`.
+
+**3. bayckrc_dual_band gets the same Lua menu** (`9c60209b8`) — same GPIO13 single-wire link.
+No screen → messages RAM-only (TextMessageModule observer), default canned list, no Sync
+word/PA fan. Also fixed a latent link error: `fanMode` only exists with `USE_RF95`.
+**Not hardware-tested yet.**
+
+**4. Radiomaster TX15 internal module** (`radiomaster_tx15_internal`, `08add31ce`) — step 1 of
+`docs/radiomaster-tx15-internal-spec.md` (Opus plan from ELRS sources): ESP32 + LR1121 on its
+LP PA into an external PA with a DAC on GPIO26; generic `LR11X0_PA_DAC_PIN` hook in
+`LR11x0Interface.cpp` maps EIRP onto ELRS's exact (DAC, dBm) pairs. **Capped at 20 dBm / LR1121
++10 dBm until measured on a power meter.** No Lua menu yet (step 2 needs full-duplex UART0 and
+the console moved off UART0). **Not hardware-tested.** Never use Meshtastic in-app OTA on it
+(writes ELRS's slot).
+
+**5. Prebuilt + web flasher.** `/prebuilt` has one build per board per sync word: emax
+`c54f34a`, bayck + TX15 `9c60209` (`77d39d4fa`). ElrsDual `tools/dual-ota-flasher/config.js`
+lists TX15 (`a3183fcb`); every board/sync resolves to exactly one file.
+
+**6. The test Emax is now dual-boot:** ElrsDual slot-switch bootloader (3 quick power cycles
+flip slots) + ElrsDual partition table (LittleFS 128 KB, counter sector 0x3F0000) +
+**ELRS v3** (ElrsDual fork `a09c2908`, EMAX target, bind phrase UID `160,46,4,125,19,62`, EU868)
+in slot 0 (boots by default) + Meshtastic (Settings build) in slot 1. The previous ELRS v4 slot
+image was backed up to the session scratchpad only. The repartition reformatted Meshtastic's
+LittleFS; a `--export-config` YAML was taken first, but the re-import was not done by the agent
+(an automated `otadata` write to switch slots was denied by the permission check) — **check the
+Meshtastic config on the Emax** and re-import/re-set region + channel if needed.
+Note: `variants/esp32/emax_900_tx_oled/partitions-dual.csv` (LittleFS 192 KB, overlapping
+0x3F0000) does **not** match the ElrsDual layout — its `.factory.bin` would clobber the
+slot-switch counter; only the `.ota.bin` is dual-boot safe.
+
+**Open items:** bayck + TX15 hardware tests; TX15 power measurement then raise
+`LR11X0_PA_MAX_EIRP_DBM`; TX15 step 2 (Lua menu); align the emax partition table with ElrsDual;
+`trunk fmt` never run (not installed here); pre-existing `getFreq() < 1e9` comparisons in
+`LR11x0Interface.cpp` (lines ~144-151, MHz vs Hz) are always true — harmless on sub-GHz, wrong
+for 2.4 GHz; ElrsDual's SSH key (`~/.ssh/akceptor_rsa`) was rejected, pushed over HTTPS.
+
+---
+
 ## PLANNED: Ra-01/Ra-01H dual-band bridge — port of bayckrc_dual_band's simulcast pattern
 
 Goal: ESP32-WROOM-32U + Ra-01 (SX1278, 433MHz) + Ra-01H (SX1276, 868MHz), receive on
