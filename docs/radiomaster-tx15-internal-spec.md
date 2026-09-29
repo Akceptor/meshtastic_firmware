@@ -1,6 +1,7 @@
 # Radiomaster TX15 internal ELRS module — Meshtastic variant spec
 
-Status: **step 1 and step 2 implemented; not yet verified on hardware.** Target: Meshtastic in OTA
+Status: **step 1 and step 2 implemented; Lua menu + BLE verified on hardware (2026-09-29) with
+EdgeTX internal module baud 400k.** Power output not yet measured. Target: Meshtastic in OTA
 slot 1 next to ExpressLRS in slot 0 (ElrsDual dual-boot). Env/dir:
 `variants/esp32/radiomaster_tx15_internal/`. Step 1 is Meshtastic only (phone over BLE); the ELRS
 Lua menu is step 2 (full-duplex UART0 in `CrsfHandsetModule`, done — see section 4).
@@ -200,7 +201,34 @@ flash usage reported by the linker). `emax_900_tx_oled` and `bayckrc_dual_band` 
 clean and unchanged (half-duplex path untouched; only the shared construction-guard `#if` and
 `inverted`'s default differ syntactically, not in the half-duplex branch's behavior).
 
-Known uncertainties (unresolved, need hardware/EdgeTX verification):
+**Hardware test (2026-09-29).** Three fixes were needed before the Lua loaded:
+
+- **Boot hung in the I2C scan** (default Wire pins 21/22; 22 is the NeoPixel), so no module
+  ever started — Lua showed "Searching". The board has no I2C devices:
+  `MESHTASTIC_EXCLUDE_I2C` (+ `EXCLUDE_ENVIRONMENTAL_SENSOR`, `EXCLUDE_AIR_QUALITY_SENSOR`,
+  `EXCLUDE_INPUTBROKER`, which need it to link).
+- **Blind baud cycling starved the main loop.** Listening at 5.25M/3.75M to EdgeTX's 1.87M
+  stream floods UART1 with errors; runOnce ticks slipped to 10-17 s, the watchdog never reached
+  1.87M and BLE stalled. The full-duplex path now ports ELRS's ESP32 hardware autobaud
+  (`CrsfHandsetModule::autobaud()`, UART1 `AUTOBAUD`/`LOWPULSE`/`HIGHPULSE` regs); it stays at
+  400k while measuring. Half-duplex boards keep the cycling watchdog (EdgeTX's 400k is its first
+  entry there).
+- `ARDUINO_SERIAL_EVENT_TASK_STACK_SIZE=4096`, as on emax/bayck.
+
+**EdgeTX internal baud must be 400k.** At 1.87M the module locks (autobaud 41/41 → 1.87M, zero
+UART errors) and answers every ping/field read correctly when driven through
+`serialpassthrough`, but under EdgeTX only ~40 RC frames/s arrive (2 ms period = 500/s expected)
+and 0-3 Lua requests per session reach the module, so the menu stalls after the header.
+Reporting serial `ELRS` in Device Info (0.5 s Lua retry instead of 5 s) did not help. Not yet
+tried: sending ELRS's periodic `0x3A` timing-sync and link-statistics frames (EdgeTX marks a
+module "dead" after 500 ms without a frame and resends the model ID on every reply).
+
+Debugging without USB: the EdgeTX CLI on the handset's USB VCP (`set pulses 0`,
+`set rfmod 0 power off|on`, `set rfmod 0 bootpin 1|0`, `serialpassthrough rfmod 0 <baud>`)
+flashes slot 1 with esptool (`--before no_reset --after no_reset`, 460800) and reads flash at
+115200 (460800 reads drop bytes). Passthrough only ends when the handset is power-cycled.
+
+Earlier uncertainties (pre-hardware):
 - Whether EdgeTX's internal-module CRSF autobaud/polarity detection actually lands on one of the
   cycled `CRSF_BAUDS` entries for an *internal* module (vs. the external-module JR-bay assumptions
   the watchdog was written against) — the bake list matches ELRS's own `TxToHandsetBauds`, but this

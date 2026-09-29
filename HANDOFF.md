@@ -38,13 +38,17 @@ word/PA fan. Also fixed a latent link error: `fanMode` only exists with `USE_RF9
 LP PA into an external PA with a DAC on GPIO26; generic `LR11X0_PA_DAC_PIN` hook in
 `LR11x0Interface.cpp` maps EIRP onto ELRS's exact (DAC, dBm) pairs. **Capped at 20 dBm / LR1121
 +10 dBm until measured on a power meter.** Step 2 (`1459498`): ELRS Lua menu over full-duplex
-CRSF on UART0 (GPIO3/1); console moved to Serial2 on the backpack pins GPIO18/5. **Not
-hardware-tested.** Never use Meshtastic in-app OTA on it
-(writes ELRS's slot).
+CRSF on UART0 (GPIO3/1); console moved to Serial2 on the backpack pins GPIO18/5. Hardware
+test (`81c6d2b68`): boot hung in the I2C scan (Wire 21/22, 22 = NeoPixel) → I2C excluded; blind
+baud cycling starved the main loop at 5.25M → ELRS-style hardware autobaud on the full-duplex
+path. **Lua menu + BLE now work with EdgeTX internal module baud = 400k; at 1.87M EdgeTX drops
+almost all Lua requests to the module (unresolved, details in the spec §4).** Never use
+Meshtastic in-app OTA on it (writes ELRS's slot).
 
 **5. Prebuilt + web flasher.** `/prebuilt` has one build per board per sync word: emax
-`c54f34a`, bayck + TX15 `9c60209` (`77d39d4fa`). ElrsDual `tools/dual-ota-flasher/config.js`
-lists TX15 (`a3183fcb`); every board/sync resolves to exactly one file.
+and bayck `59f5439`; TX15 `81c6d2b` ships the stock `0x2b` sync word only (LR1121, no
+`sync0x12` build), and ElrsDual `tools/dual-ota-flasher/config.js` now matches it without a
+`{sync}` slot, which hides the sync selector for TX15.
 
 **6. The test Emax is now dual-boot:** ElrsDual slot-switch bootloader (3 quick power cycles
 flip slots) + ElrsDual partition table (LittleFS 128 KB, counter sector 0x3F0000) +
@@ -60,7 +64,7 @@ overlapping the slot-switch counter at 0x3F0000; fixed in `59f543962` to the Elr
 never uses it — it writes the `.ota.bin` to the chosen slot plus its own bundled bootloader,
 partition table and boot_app0 (`tools/dual-ota-flasher/flasher.js:241-248`).
 
-**Open items:** bayck + TX15 hardware tests; TX15 power measurement then raise
+**Open items:** bayck hardware test; TX15 Lua at 1.87M internal baud; TX15 power measurement then raise
 `LR11X0_PA_MAX_EIRP_DBM`; 
 `trunk fmt` never run (not installed here); pre-existing `getFreq() < 1e9` comparisons in
 `LR11x0Interface.cpp` (lines ~144-151, MHz vs Hz) are always true — harmless on sub-GHz, wrong
