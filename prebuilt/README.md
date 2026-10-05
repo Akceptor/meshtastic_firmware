@@ -197,6 +197,24 @@ Built with:
 pio run -e radiomaster_tx15_internal
 ```
 
+## ESP32 SX12xx dual-radio board, single-radio build
+
+Dual SX1276/RF95 radio footprint (hardware.json pin export), second radio unused — pins
+commented out in `variants/esp32/esp32_sx12xx_dual_single/variant.h`. No screen, no GPS.
+
+| File | Board | Notes |
+|---|---|---|
+| `firmware-esp32_sx12xx_dual_single-2.7.26.ff55566.factory.bin` | ESP32 SX12xx Dual (single radio) | Full image incl. bootloader + partitions. Flash to offset `0x0`. |
+| `firmware-esp32_sx12xx_dual_single-2.7.26.ff55566.ota.bin` | ESP32 SX12xx Dual (single radio) | App only. For OTA, or serial flash to offset `0x10000`. |
+
+Not yet verified on hardware.
+
+Built with:
+
+```
+pio run -e esp32_sx12xx_dual_single
+```
+
 ## `sync0x12` — read this before switching
 
 Sync word **`0x12`** (Emax runtime setting, or a custom `-DMESHTASTIC_LORA_SYNCWORD=0x12` build)
