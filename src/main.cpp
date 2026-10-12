@@ -12,8 +12,20 @@
 #include "PowerFSM.h"
 #include "PowerMon.h"
 #include "RadioLibInterface.h"
-#ifdef BAYCKRC_DUAL_BAND
+#ifdef BAYCKRC_SECOND_RADIO_FREQ_MHZ
+#ifdef USE_LR1121
+#include "mesh/LR1121Interface.h"
+typedef LR1121Interface SecondRadioInterface;
+#define SECOND_RADIO_IRQ_PIN LR1121_IRQ_PIN_2
+#define SECOND_RADIO_NRESET_PIN LR1121_NRESET_PIN_2
+#define SECOND_RADIO_BUSY_PIN LR1121_BUSY_PIN_2
+#else
 #include "mesh/LR1120Interface.h"
+typedef LR1120Interface SecondRadioInterface;
+#define SECOND_RADIO_IRQ_PIN LR1120_IRQ_PIN_2
+#define SECOND_RADIO_NRESET_PIN LR1120_NRESET_PIN_2
+#define SECOND_RADIO_BUSY_PIN LR1120_BUSY_PIN_2
+#endif
 #endif
 #include "ReliableRouter.h"
 #include "TransmitHistory.h"
@@ -993,23 +1005,28 @@ void setup()
 #endif
 #endif
 
+#ifdef LORA_CS_2
+    // Second radio's NSS floats until its interface inits; keep it off the shared bus meanwhile.
+    pinMode(LORA_CS_2, OUTPUT);
+    digitalWrite(LORA_CS_2, HIGH);
+#endif
     auto rIf = initLoRa();
 
-#ifdef BAYCKRC_DUAL_BAND
-    // Second LR1120, locked to a fixed frequency, shares the SPI bus with the primary radio via the
+#ifdef BAYCKRC_SECOND_RADIO_FREQ_MHZ
+    // Second LR11x0, locked to a fixed frequency, shares the SPI bus with the primary radio via the
     // same RadioLibHAL. Fail-closed: if this radio doesn't come up, don't run with only the primary
     // either (see the fail-closed check further below where both interfaces are added to the router).
     std::unique_ptr<RadioInterface> rIf2;
     if (rIf) {
-        rIf2 = std::unique_ptr<LR1120Interface>(new LR1120Interface((LockingArduinoHal *)RadioLibHAL, LORA_CS_2, LR1120_IRQ_PIN_2,
-                                                                     LR1120_NRESET_PIN_2, LR1120_BUSY_PIN_2, /*isSecondary=*/true,
-                                                                     BAYCKRC_SECOND_RADIO_FREQ_MHZ));
+        rIf2 = std::unique_ptr<SecondRadioInterface>(
+            new SecondRadioInterface((LockingArduinoHal *)RadioLibHAL, LORA_CS_2, SECOND_RADIO_IRQ_PIN, SECOND_RADIO_NRESET_PIN,
+                                     SECOND_RADIO_BUSY_PIN, /*isSecondary=*/true, BAYCKRC_SECOND_RADIO_FREQ_MHZ));
         if (!rIf2->init()) {
             LOG_WARN("BAYCKRC: second radio init failed, disabling both radios (fail-closed)");
             rIf = nullptr;
             rIf2 = nullptr;
         } else {
-            LOG_INFO("BAYCKRC: second radio (433.125MHz) init success");
+            LOG_INFO("BAYCKRC: second radio (%.3fMHz) init success", BAYCKRC_SECOND_RADIO_FREQ_MHZ);
         }
     }
 #endif
@@ -1070,7 +1087,7 @@ void setup()
                                                        1000);
 
         router->addInterface(std::move(rIf));
-#ifdef BAYCKRC_DUAL_BAND
+#ifdef BAYCKRC_SECOND_RADIO_FREQ_MHZ
         if (rIf2)
             router->addSecondInterface(std::move(rIf2));
 #endif

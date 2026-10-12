@@ -1,6 +1,6 @@
 #include "configuration.h"
 
-#ifdef BAYCKRC_DUAL_BAND
+#if defined(BAYCKRC_DUAL_BAND) || defined(BAYCKRC_GEMINI_RX)
 
 #include "mesh/Router.h"
 #include <Adafruit_NeoPixel.h>
@@ -20,6 +20,9 @@ static void radioCheckTask(void *param)
 {
     vTaskDelay(pdMS_TO_TICKS(2000));
     bool radioOK = router && router->getRadioIface() != nullptr;
+#ifdef BAYCKRC_SECOND_RADIO_FREQ_MHZ
+    radioOK = radioOK && router->getSecondRadioIface() != nullptr;
+#endif
     if (radioOK) {
         setLED(0, 255, 0); // green = radio init OK
         LOG_INFO("BAYCKRC: radio OK, LED green");
@@ -39,4 +42,4 @@ void lateInitVariant()
     xTaskCreate(radioCheckTask, "bayckrcLED", 2048, nullptr, 1, nullptr);
 }
 
-#endif // BAYCKRC_DUAL_BAND
+#endif // BAYCKRC_DUAL_BAND || BAYCKRC_GEMINI_RX

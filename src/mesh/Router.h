@@ -45,6 +45,9 @@ class Router : protected concurrency::OSThread, protected PacketHistory
     /// Currently active radio interface, or nullptr if none was successfully added.
     RadioInterface *getRadioIface() { return iface.get(); }
 
+    /// Second simulcast radio interface, or nullptr if none was added.
+    RadioInterface *getSecondRadioIface() { return iface2.get(); }
+
     /**
      * do idle processing
      * Mostly looking in our incoming rxPacket queue and calling handleReceived.
