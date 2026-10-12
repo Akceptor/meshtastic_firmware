@@ -21,12 +21,9 @@
 #define NEOPIXEL_TYPE (NEO_GRB + NEO_KHZ800)
 // ENABLE_AMBIENTLIGHTING intentionally omitted — variant.cpp owns the NeoPixel (blue→green status)
 
-// Fan — driven by LR11x0Interface's threshold-based auto control (see LR11x0Interface.cpp).
-// Threshold is an unvalidated default (sub-GHz output is capped at 14 dBm by LR1110_MAX_POWER
-// in platformio.ini, so this only kicks in near the top of that range) — worth re-measuring
-// on hardware, same caveat as EMAX's PA table.
+// Fan threshold is LR1120 drive dBm (pre-PA): -8 = ELRS 250mW point.
 #define RF95_FAN_EN 4
-#define RF95_FAN_ON_THRESHOLD_DBM 10
+#define RF95_FAN_ON_THRESHOLD_DBM -8
 
 // LR1120 dual-band radio (device ID 0x02; LR1121=0x03 — confirmed by findChip() failure pattern)
 #define USE_LR1120
@@ -42,12 +39,11 @@
 #define LR1120_NRESET_PIN 26
 #define LR1120_BUSY_PIN 36
 #define LR1120_IRQ_PIN 37
-// RF switching via LR1120 internal DIOs (DIO5/DIO6)
+// RF switching via LR1120 internal DIOs (DIO5-DIO8, see rfswitch.h)
 #define LR11X0_DIO_AS_RF_SWITCH
 // DCDC always enabled by firmware for LR11x0
-// radio_rfo_hf=true: HF (2.4GHz) uses RFO path — reflected in rfswitch_table MODE_TX_HF
-// LR1110_MAX_POWER=14 (in platformio.ini) forces LP PA path for all sub-GHz regions.
-// LR1120 HP PA covers 410-510 MHz only — using it at 868/915 MHz causes TX to hang.
+// LR1110_MAX_POWER=5 (in platformio.ini) caps PA input at ELRS's 2W drive level and keeps the
+// LR1120 on its LP PA (HP PA covers 410-510 MHz only — using it at 868/915 MHz causes TX to hang).
 
 // Second LR1120 (Gemini TX variant) — shares SPI bus (SCK/MISO/MOSI above), separate CS/RST/BUSY/IRQ.
 // Simulcast: mirrors every TX/RX of the primary radio, locked to a fixed frequency (see main.cpp

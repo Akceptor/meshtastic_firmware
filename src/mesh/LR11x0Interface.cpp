@@ -36,6 +36,9 @@ static const Module::RfSwitchMode_t rfswitch_table[] = {
 #define LR1120_MAX_POWER 13
 #endif
 
+// LP PA floor; TX_GAIN_LORA on external-PA boards can push requested drive below it.
+#define LR1110_MIN_POWER -17
+
 #ifdef RF95_FAN_EN
 // Boards without their own RF95_FAN_ON_THRESHOLD_DBM keep the old "always on" behavior.
 #ifndef RF95_FAN_ON_THRESHOLD_DBM
@@ -131,6 +134,8 @@ template <typename T> bool LR11x0Interface<T>::init()
         power = LR1120_MAX_POWER;
         preambleLength = 12; // 12 is the default for operation above 2GHz
     }
+    if (power < LR1110_MIN_POWER)
+        power = LR1110_MIN_POWER;
 
 #ifdef LR11X0_PA_DAC_PIN
     Lr11x0PaPoint pa = lr11x0PaFor(requestedEirp, getFreq() > 1000.0f);
@@ -289,6 +294,8 @@ template <typename T> bool LR11x0Interface<T>::reconfigure()
         power = LR1110_MAX_POWER;
     if ((power > LR1120_MAX_POWER) && (config.lora.region == meshtastic_Config_LoRaConfig_RegionCode_LORA_24)) // 2.4G power limit
         power = LR1120_MAX_POWER;
+    if (power < LR1110_MIN_POWER)
+        power = LR1110_MIN_POWER;
 
     err = lora.setOutputPower(power);
     assert(err == RADIOLIB_ERR_NONE);
