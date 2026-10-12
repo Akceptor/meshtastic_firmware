@@ -4,6 +4,33 @@ Binaries built from this branch. The suffix records any non-default build flags.
 
 ## Contents
 
+### 2.7.26.3e5952e — BAYCKRC 900/2400 Dual Band Gemini RX
+
+| File | Board | Notes |
+|---|---|---|
+| `firmware-bayckrc_gemini_rx-2.7.26.3e5952e.ota.bin` | BAYCKRC Dual Band Gemini RX | App only — flash to the non-ExpressLRS slot (`0x10000` or `0x1F0000`) with the ElrsDual web flasher. |
+| `firmware-bayckrc_gemini_rx-2.7.26.3e5952e.factory.bin` | BAYCKRC Dual Band Gemini RX | Standalone Meshtastic. Flash to offset `0x0`. **Overwrites ExpressLRS / ElrsDual bootloader.** |
+
+ESP32-PICO-D4 + two LR1121, no external PA. Same gateway behaviour as the BAYCKRC TX: the
+primary radio follows your region config, the second is locked to **433.125 MHz** and
+simulcasts every TX/RX. If either radio fails to init, both are disabled (LED red).
+Same **22 dBm max / avoid 1-14 dBm** TX power rule as the other LR1121 RXes; stock sync word
+`0x2b`. LED: blue at boot, green when both radios are up, red on failure.
+
+Verified on hardware: both radios init (`Device 3`, FW 1.1, no TCXO) and RX/TX on EU_868 +
+433.125 MHz. The status LED and the I2C-excluded build (fixes an intermittent boot hang in the
+I2C scan — default Wire pins are `radio_rst_2` and the NeoPixel) are not yet run on hardware.
+The adapter-driven reset doesn't reboot this board: power-cycle after flashing.
+
+Pins: SPI SCK 25 / MISO 33 / MOSI 32; radio 1 NSS 27 / RST 26 / BUSY 36 / DIO1 37; radio 2
+NSS 13 / RST 21 / BUSY 39 / DIO1 34; NeoPixel GPIO22; button GPIO0.
+
+Built with:
+
+```
+pio run -e bayckrc_gemini_rx
+```
+
 ### 2.7.26.77fec45 — ESP32 LR1121 RX
 
 | File | Board | Notes |
@@ -97,8 +124,12 @@ list is the Meshtastic default (Hi/Bye/Yes/No/Ok), and there's no Sync Word / PA
 
 | File | Board | Notes |
 |---|---|---|
-| `firmware-bayckrc_dual_band-2.7.26.59f5439.factory.bin` | BAYCKRC Dual Band TX (gateway) | Full image incl. bootloader + partitions. Flash to offset `0x0`. |
-| `firmware-bayckrc_dual_band-2.7.26.59f5439.ota.bin` | BAYCKRC Dual Band TX (gateway) | App only. For OTA, or serial flash to offset `0x10000`. |
+| `firmware-bayckrc_dual_band-2.7.26.3e5952e.factory.bin` | BAYCKRC Dual Band TX (gateway) | Full image incl. bootloader + partitions. Flash to offset `0x0`. |
+| `firmware-bayckrc_dual_band-2.7.26.3e5952e.ota.bin` | BAYCKRC Dual Band TX (gateway) | App only. For OTA, or serial flash to offset `0x10000`. |
+
+3e5952e: LR1120 drive capped at ELRS's external-PA levels (+5 dBm max = 2W point), ELRS default
+DIO5-8 RF switch table, second radio CS held high during primary init. Not yet re-verified on
+hardware.
 
 Stock Meshtastic sync word `0x2b` (single build). This board has no runtime Sync word setting;
 for an `0x12` mesh (see "The sync word trap" below) build it yourself with
