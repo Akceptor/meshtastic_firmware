@@ -45,6 +45,8 @@ template <class T> class LR11x0Interface : public RadioLibInterface
 
     [[nodiscard]] float getFreq() override { return fixedFreqOverride > 0 ? fixedFreqOverride : RadioInterface::getFreq(); }
 
+    int8_t maxPower();
+
     /**
      * Glue functions called from ISR land
      */

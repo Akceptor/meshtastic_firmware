@@ -96,6 +96,15 @@ LR11x0Interface<T>::LR11x0Interface(LockingArduinoHal *hal, RADIOLIB_PIN_TYPE cs
     LOG_WARN("LR11x0Interface(cs=%d, irq=%d, rst=%d, busy=%d)", cs, irq, rst, busy);
 }
 
+template <typename T> int8_t LR11x0Interface<T>::maxPower()
+{
+#ifdef LR11X0_MAX_POWER_2
+    if (isSecondaryRadio)
+        return LR11X0_MAX_POWER_2;
+#endif
+    return LR1110_MAX_POWER;
+}
+
 /// Initialise the Driver transport hardware and software.
 /// Make sure the Driver is properly configured before calling init().
 /// \return true if initialisation succeeded.
@@ -127,7 +136,7 @@ template <typename T> bool LR11x0Interface<T>::init()
     int8_t requestedEirp = power;
 #endif
 
-    limitPower(LR1110_MAX_POWER);
+    limitPower(maxPower());
 
     if ((power > LR1120_MAX_POWER) &&
         (config.lora.region == meshtastic_Config_LoRaConfig_RegionCode_LORA_24)) { // clamp again if wide freq range
@@ -217,7 +226,11 @@ template <typename T> bool LR11x0Interface<T>::init()
 #endif
 
     if (dioAsRfSwitch) {
+#ifdef LR11X0_RFSWITCH_TABLE_2
+        lora.setRfSwitchTable(rfswitch_dio_pins, isSecondaryRadio ? rfswitch_table_2 : rfswitch_table);
+#else
         lora.setRfSwitchTable(rfswitch_dio_pins, rfswitch_table);
+#endif
         LOG_DEBUG("Set DIO RF switch");
     }
 
@@ -290,8 +303,8 @@ template <typename T> bool LR11x0Interface<T>::reconfigure()
     updateFanState(pa.eirp); // power is drive (-14..10) here, not EIRP, and would never trip the fan
 #endif
 #else
-    if (power > LR1110_MAX_POWER) // This chip has lower power limits than some
-        power = LR1110_MAX_POWER;
+    if (power > maxPower()) // This chip has lower power limits than some
+        power = maxPower();
     if ((power > LR1120_MAX_POWER) && (config.lora.region == meshtastic_Config_LoRaConfig_RegionCode_LORA_24)) // 2.4G power limit
         power = LR1120_MAX_POWER;
     if (power < LR1110_MIN_POWER)

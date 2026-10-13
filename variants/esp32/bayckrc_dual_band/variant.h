@@ -54,3 +54,5 @@
 #define LR1120_BUSY_PIN_2 39 // GPIO39 input-only
 #define LR1120_IRQ_PIN_2 34  // GPIO34 input-only
 #define BAYCKRC_SECOND_RADIO_FREQ_MHZ 433.125f
+// PA bypassed on the second radio (rfswitch_table_2), so it may use the full LP PA range.
+#define LR11X0_MAX_POWER_2 14

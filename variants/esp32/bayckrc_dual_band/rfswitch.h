@@ -18,3 +18,18 @@ static const Module::RfSwitchMode_t rfswitch_table[] = {
     {LR11x0::MODE_WIFI, {HIGH, LOW, LOW, LOW}},
     END_OF_MODE_TABLE,
 };
+
+// Second radio runs at 433 MHz, outside the 900 MHz external PA's band: keep DIO8 low on TX so the
+// PA path stays off. Unverified that DIO8 gates the PA; measure 433.125/866.25 MHz output.
+#define LR11X0_RFSWITCH_TABLE_2
+static const Module::RfSwitchMode_t rfswitch_table_2[] = {
+    // mode                  DIO5  DIO6  DIO7  DIO8
+    {LR11x0::MODE_STBY, {LOW, LOW, LOW, LOW}},
+    {LR11x0::MODE_RX, {LOW, LOW, HIGH, LOW}},
+    {LR11x0::MODE_TX, {LOW, LOW, LOW, LOW}},
+    {LR11x0::MODE_TX_HP, {LOW, LOW, LOW, LOW}},
+    {LR11x0::MODE_TX_HF, {LOW, HIGH, LOW, LOW}},
+    {LR11x0::MODE_GNSS, {LOW, LOW, LOW, LOW}},
+    {LR11x0::MODE_WIFI, {HIGH, LOW, LOW, LOW}},
+    END_OF_MODE_TABLE,
+};
