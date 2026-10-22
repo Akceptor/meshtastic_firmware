@@ -246,6 +246,12 @@ Built with:
 pio run -e esp32_sx12xx_dual_single
 ```
 
+### Radio probe (diagnostic, not firmware)
+
+`radio-probe-esp32_sx12xx_dual.factory.bin` reads the SX127x version register (expect `0x12`) on both
+radio slots every 3 s and prints the result at 115200 baud. Source: `tools/radio-probe/`. Flash to
+offset `0x0`. Use it to tell an absent or wrong chip from a firmware problem.
+
 ## `sync0x12` — read this before switching
 
 Sync word **`0x12`** (Emax runtime setting, or a custom `-DMESHTASTIC_LORA_SYNCWORD=0x12` build)
