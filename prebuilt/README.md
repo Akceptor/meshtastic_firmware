@@ -235,10 +235,10 @@ commented out in `variants/esp32/esp32_sx12xx_dual_single/variant.h`. No screen,
 
 | File | Board | Notes |
 |---|---|---|
-| `firmware-esp32_sx12xx_dual_single-2.7.26.ff55566.factory.bin` | ESP32 SX12xx Dual (single radio) | Full image incl. bootloader + partitions. Flash to offset `0x0`. |
-| `firmware-esp32_sx12xx_dual_single-2.7.26.ff55566.ota.bin` | ESP32 SX12xx Dual (single radio) | App only. For OTA, or serial flash to offset `0x10000`. |
+| `firmware-esp32_sx12xx_dual_single-2.7.26.031e90d-resetfix.factory.bin` | ESP32 SX12xx Dual (single radio) | Full image incl. bootloader + partitions. Flash to offset `0x0`. |
+| `firmware-esp32_sx12xx_dual_single-2.7.26.031e90d-resetfix.ota.bin` | ESP32 SX12xx Dual (single radio) | App only. For OTA, or serial flash to offset `0x10000`. |
 
-Not yet verified on hardware.
+Radio init verified on hardware (RF95 init OK) with the reset fix; RX/TX not yet tested.
 
 Built with:
 
