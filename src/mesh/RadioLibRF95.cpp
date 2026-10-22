@@ -7,6 +7,19 @@
 
 RadioLibRF95::RadioLibRF95(Module *mod) : SX1278(mod) {}
 
+#ifdef ESP32_SX12XX_DUAL_SINGLE
+// RadioLib's 1 ms low / 5 ms settle reads RegVersion 0x00 on this board; 2 ms / 10 ms works.
+void RadioLibRF95::reset()
+{
+    Module *mod = getMod();
+    mod->hal->pinMode(mod->getRst(), mod->hal->GpioModeOutput);
+    mod->hal->digitalWrite(mod->getRst(), mod->hal->GpioLevelLow);
+    mod->hal->delay(2);
+    mod->hal->digitalWrite(mod->getRst(), mod->hal->GpioLevelHigh);
+    mod->hal->delay(10);
+}
+#endif
+
 int16_t RadioLibRF95::begin(float freq, float bw, uint8_t sf, uint8_t cr, uint8_t syncWord, int8_t power, uint16_t preambleLength,
                             uint8_t gain)
 {
